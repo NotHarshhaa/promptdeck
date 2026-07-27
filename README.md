@@ -84,16 +84,29 @@ npm run dev
 
 ### Configure
 
-```env
-# .env
-OPENAI_API_KEY=
-GEMINI_API_KEY=
-ANTHROPIC_API_KEY=
-GROQ_API_KEY=
-OPENROUTER_API_KEY=
-DATABASE_URL=
-REDIS_URL=
+Copy the template, then configure only the providers you intend to use:
+
+```bash
+cp .env.example .env
 ```
+
+```env
+# Required only for the matching provider's Live mode
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+GEMINI_API_KEY=
+GROQ_API_KEY=
+
+# Required for Live Ollama mode; run Ollama separately
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+### Execution modes
+
+- **Demo** — works without credentials and produces a clearly labelled deterministic local response. Use it to explore the playground safely.
+- **Live** — becomes available only when the selected provider has its server-side environment value configured. PromptDeck streams the actual response through LiteLLM; API keys are never sent to the browser.
+
+PromptDeck persists conversations, messages, run latency, token counts, and available provider-reported costs in local SQLite (`data/promptdeck.db` by default). The right-hand telemetry panel displays observed values from the latest run, rather than estimates.
 
 ---
 
