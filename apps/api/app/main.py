@@ -469,7 +469,7 @@ def metrics_summary() -> MetricsSummary:
     with db_connection() as connection:
         row = connection.execute(
             """SELECT COUNT(*) AS total_runs,
-                      SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END) AS completed_runs,
+                      COALESCE(SUM(CASE WHEN status = 'complete' THEN 1 ELSE 0 END), 0) AS completed_runs,
                       COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS total_tokens,
                       COALESCE(AVG(latency_ms), 0) AS average_latency_ms,
                       SUM(cost_usd) AS total_cost_usd
