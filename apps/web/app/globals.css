@@ -29,122 +29,72 @@
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
 :root {
-  --background: #06080d;
-  --foreground: #e2e8f0;
-  --card: #0c111c;
-  --card-foreground: #e2e8f0;
-  --popover: #0c111c;
-  --popover-foreground: #e2e8f0;
-  --primary: #67e8f9;
-  --primary-foreground: #061017;
-  --secondary: #18202e;
-  --secondary-foreground: #e2e8f0;
-  --muted: #111826;
-  --muted-foreground: #64748b;
-  --accent: #18202e;
-  --accent-foreground: #e2e8f0;
-  --destructive: #fb7185;
-  --border: rgba(255, 255, 255, 0.1);
-  --input: rgba(255, 255, 255, 0.1);
-  --ring: #67e8f9;
-  --radius: 0.75rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0.008 326);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0.008 326);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0.008 326);
+  --primary: oklch(0.212 0.019 322.12);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.96 0.003 325.6);
+  --secondary-foreground: oklch(0.212 0.019 322.12);
+  --muted: oklch(0.96 0.003 325.6);
+  --muted-foreground: oklch(0.542 0.034 322.5);
+  --accent: oklch(0.96 0.003 325.6);
+  --accent-foreground: oklch(0.212 0.019 322.12);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0.005 325.62);
+  --input: oklch(0.922 0.005 325.62);
+  --ring: oklch(0.711 0.019 323.02);
+  --radius: 0.625rem;
+}
+
+.dark {
+  --background: oklch(0.145 0.008 326);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.212 0.019 322.12);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.212 0.019 322.12);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0.005 325.62);
+  --primary-foreground: oklch(0.212 0.019 322.12);
+  --secondary: oklch(0.263 0.024 320.12);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.263 0.024 320.12);
+  --muted-foreground: oklch(0.711 0.019 323.02);
+  --accent: oklch(0.263 0.024 320.12);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.542 0.034 322.5);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
   html {
     @apply font-sans;
-    background: #06080d;
+    background: var(--background);
   }
+
   body {
-    @apply bg-background text-foreground;
+    @apply min-h-svh bg-background text-foreground;
   }
-  button, select, textarea, input {
+
+  button,
+  select,
+  textarea,
+  input {
     font: inherit;
   }
-}
-
-::selection {
-  background: rgba(103, 232, 249, 0.28);
-  color: #ecfeff;
-}
-
-.control-room::before {
-  position: fixed;
-  inset: -30%;
-  z-index: 0;
-  pointer-events: none;
-  content: "";
-  background: radial-gradient(circle at 55% 8%, rgba(34, 211, 238, 0.09), transparent 26%), radial-gradient(circle at 83% 70%, rgba(139, 92, 246, 0.09), transparent 22%);
-}
-
-.control-grid {
-  background-image: linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: linear-gradient(to bottom, black, transparent 65%);
-}
-
-.logo-sigil {
-  background: linear-gradient(135deg, #a5f3fc, #67e8f9 45%, #c4b5fd);
-  box-shadow: 0 0 30px rgba(103, 232, 249, 0.2);
-}
-
-.signal-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: #67e8f9;
-  box-shadow: 0 0 12px #67e8f9;
-}
-
-.rack-label {
-  display: block;
-  font-family: var(--font-mono), monospace;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  color: #64748b;
-  text-transform: uppercase;
-}
-
-.control-range {
-  height: 3px;
-  cursor: pointer;
-  accent-color: #67e8f9;
-}
-
-.control-range::-webkit-slider-thumb {
-  width: 13px;
-  height: 13px;
-  cursor: grab;
-  border: 2px solid #061017;
-  border-radius: 999px;
-  appearance: none;
-  background: #a5f3fc;
-  box-shadow: 0 0 10px rgba(103, 232, 249, 0.75);
-}
-
-.control-range::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  cursor: grab;
-  border: 2px solid #061017;
-  border-radius: 999px;
-  background: #a5f3fc;
-  box-shadow: 0 0 10px rgba(103, 232, 249, 0.75);
-}
-
-textarea::-webkit-scrollbar, aside ::-webkit-scrollbar {
-  width: 5px;
-}
-
-textarea::-webkit-scrollbar-thumb, aside ::-webkit-scrollbar-thumb {
-  border-radius: 99px;
-  background: rgba(148, 163, 184, 0.25);
 }
