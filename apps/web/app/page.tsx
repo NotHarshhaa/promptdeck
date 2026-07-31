@@ -27,6 +27,10 @@ import {
   RotateCcw,
   SendHorizontal,
   TerminalSquare,
+  TestTube2,
+  ThumbsDown,
+  ThumbsUp,
+  ShieldCheck,
   UserRound,
   Variable,
   X,
@@ -125,6 +129,8 @@ const navigation: { label: NavigationItem; icon: typeof Atom }[] = [
   { label: "Prompt library", icon: BookOpen },
   { label: "Cost analytics", icon: BarChart3 },
   { label: "Evaluations", icon: ListChecks },
+  { label: "Test suites", icon: TestTube2 },
+  { label: "Safety checks", icon: ShieldCheck },
   { label: "Exports", icon: Download },
   { label: "Run history", icon: History },
   { label: "Providers", icon: Radio },
@@ -240,6 +246,7 @@ export default function Page() {
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(1024)
   const [lastRun, setLastRun] = useState<RunMetric | null>(null)
+  const [feedbackRating, setFeedbackRating] = useState<-1 | 1 | null>(null)
   const [isStreaming, setIsStreaming] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [activeNav, setActiveNav] = useState<NavigationItem>("Playground")
@@ -370,6 +377,25 @@ export default function Page() {
     setMode(nextMode)
   }
 
+  async function submitRunFeedback(rating: -1 | 1) {
+    if (!lastRun) return
+    try {
+      const response = await fetch(`${API_URL}/api/runs/${lastRun.id}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rating }),
+      })
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { detail?: string } | null
+        throw new Error(body?.detail ?? "Could not save feedback.")
+      }
+      setFeedbackRating(rating)
+      setNotice(rating === 1 ? "Positive feedback saved for this run." : "Feedback saved for this run.")
+    } catch (error) {
+      setNotice(apiError(error))
+    }
+  }
+
   function selectProvider(providerId: string, nextMode: RunMode = "demo") {
     setSelectedProviderId(providerId)
     setMode(nextMode)
@@ -453,7 +479,10 @@ export default function Page() {
           if (payload.type === "complete") {
             setConversationId(payload.conversation_id ?? null)
             setConversationName(payload.title ?? "Untitled run")
-            if (payload.metrics) setLastRun(payload.metrics)
+            if (payload.metrics) {
+              setLastRun(payload.metrics)
+              setFeedbackRating(null)
+            }
           }
           if (payload.type === "error") throw new Error(payload.message ?? "Provider execution failed.")
         }
@@ -651,6 +680,7 @@ export default function Page() {
               <TabsContent id="telemetry" className="pt-4">
                 <Card className="border"><CardHeader className="border-b"><CardTitle>Latest run</CardTitle><CardDescription>Values reported after the stream finishes.</CardDescription></CardHeader><CardContent className="grid grid-cols-3 divide-x pt-4 text-center"><div><p className="font-mono text-sm">{lastRun ? formatTokens(lastRun.prompt_tokens + lastRun.completion_tokens) : "—"}</p><p className="mt-1 text-[10px] text-muted-foreground uppercase">Tokens</p></div><div><p className="font-mono text-sm">{lastRun ? formatLatency(lastRun.latency_ms) : "—"}</p><p className="mt-1 text-[10px] text-muted-foreground uppercase">Latency</p></div><div><p className="font-mono text-sm">{lastRun ? formatCost(lastRun.cost_usd) : "—"}</p><p className="mt-1 text-[10px] text-muted-foreground uppercase">Cost</p></div></CardContent></Card>
                 <Card className="mt-4 border" size="sm"><CardContent className="text-[11px] leading-5 text-muted-foreground">{lastRun ? `${lastRun.token_source} token counts · ${lastRun.mode} mode` : "Run a prompt to populate observed telemetry."}</CardContent></Card>
+                {lastRun && <Card className="mt-4 border" size="sm"><CardContent><p className="text-xs font-medium">Was this response helpful?</p><div className="mt-2 flex gap-2"><Button onPress={() => void submitRunFeedback(1)} variant={feedbackRating === 1 ? "default" : "outline"} size="sm"><ThumbsUp /> Helpful</Button><Button onPress={() => void submitRunFeedback(-1)} variant={feedbackRating === -1 ? "default" : "outline"} size="sm"><ThumbsDown /> Needs work</Button></div></CardContent></Card>}
               </TabsContent>
             </Tabs>
           </div>

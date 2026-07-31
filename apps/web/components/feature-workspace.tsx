@@ -3,6 +3,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react"
 import { BarChart3, BookOpen, CheckCircle2, Download, GitCompare, ListChecks, Plus, RefreshCw, RotateCcw, Save, XCircle } from "lucide-react"
 
+import { QualityWorkspace, type QualityView } from "@/components/quality-workspace"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
-export type FeatureView = "Compare models" | "Prompt library" | "Cost analytics" | "Evaluations" | "Exports"
+export type FeatureView = "Compare models" | "Prompt library" | "Cost analytics" | "Evaluations" | "Exports" | QualityView
 
 type Provider = { id: string; name: string; model: string; configured: boolean }
 type Conversation = { id: string; title: string; updated_at: string }
@@ -51,7 +52,7 @@ async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export function FeatureWorkspace({ view, providers, conversations, onUsePrompt, onRefresh }: { view: FeatureView; providers: Provider[]; conversations: Conversation[]; onUsePrompt: (content: string, systemPrompt: string) => void; onRefresh: () => Promise<void> }) {
+function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, onRefresh }: { view: FeatureView; providers: Provider[]; conversations: Conversation[]; onUsePrompt: (content: string, systemPrompt: string) => void; onRefresh: () => Promise<void> }) {
   const [notice, setNotice] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [comparisons, setComparisons] = useState<Comparison[]>([])
@@ -236,4 +237,13 @@ export function FeatureWorkspace({ view, providers, conversations, onUsePrompt, 
 
     {view === "Exports" && <div className="mt-6 max-w-2xl"><Card className="border"><CardHeader className="border-b"><CardTitle>Export a saved run</CardTitle><CardDescription>Each file includes conversation messages; Markdown, CSV, and JSON also include persisted telemetry where applicable.</CardDescription></CardHeader><CardContent className="space-y-4 pt-4"><label className="block text-xs font-medium">Saved run<select value={exportConversationId} onChange={(event) => setExportConversationId(event.target.value)} className="mt-2 h-9 w-full border bg-background px-2 text-xs"><option value="">Choose a run…</option>{conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}</select></label><label className="block text-xs font-medium">Format<select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)} className="mt-2 h-9 w-full border bg-background px-2 text-xs"><option value="markdown">Markdown (.md)</option><option value="json">JSON (.json)</option><option value="csv">CSV (.csv)</option><option value="html">HTML (.html)</option></select></label><Button onPress={() => void exportConversation()} isDisabled={isLoading || !conversations.length}><Download /> {isLoading ? "Preparing…" : "Download export"}</Button>{!conversations.length && <p className="text-xs text-muted-foreground">Run and save a prompt before exporting it.</p>}</CardContent></Card></div>}
   </div></div>
+}
+
+
+
+export function FeatureWorkspace(props: { view: FeatureView; providers: Provider[]; conversations: Conversation[]; onUsePrompt: (content: string, systemPrompt: string) => void; onRefresh: () => Promise<void> }) {
+  if (props.view === "Test suites" || props.view === "Safety checks") {
+    return <QualityWorkspace view={props.view} providers={props.providers} onRefresh={props.onRefresh} onUsePrompt={(content) => props.onUsePrompt(content, "You are a helpful assistant.")} />
+  }
+  return <FeatureWorkspaceContent {...props} />
 }

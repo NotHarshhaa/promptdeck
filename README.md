@@ -123,6 +123,9 @@ PromptDeck persists conversations, messages, run latency, token counts, and avai
 - 📚 Reusable prompt library with categories, tags, immutable revisions, and rollback
 - 💰 Cost analytics per provider/model across playground runs and comparisons
 - 📝 Assertion-based response evaluations (contains, absence, exact match, JSON validity, and length)
+- 🧪 Reusable batch test suites with per-case assertions, persisted outcomes, and pass-rate gates
+- 👍 Human feedback controls for completed prompt runs
+- 🛡️ Local-only safety preflight that redacts likely secrets and PII before provider use
 - 📤 Conversation exports in Markdown, JSON, CSV, and HTML
 
 **Planned (v0.4+):**
@@ -207,8 +210,8 @@ promptdeck/
 |---|---|
 | **v0.1** ✅ | Multi-provider chat, streaming, API keys, conversation history |
 | **v0.2** ✅ | Model comparison, prompt library, cost tracking |
-| **v0.3** ✅ | Prompt versioning, exports, assertion evaluations, analytics |
-| **v0.4** ⬜ | Advanced automated evaluations, batch testing, benchmarks, reports |
+| **v0.3** ✅ | Prompt versioning, exports, assertion evaluations, analytics, test suites, feedback, safety checks |
+| **v0.4** ⬜ | Advanced automated evaluations, benchmarks, reports |
 | **v0.5** ⬜ | LangGraph workflows, MCP support, plugins, AI gateway |
 | **v1.0** ⬜ | Teams, workspaces, RBAC, audit logs, usage limits |
 

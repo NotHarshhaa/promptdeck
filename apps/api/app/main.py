@@ -6,6 +6,7 @@ import html
 import io
 import json
 import os
+import re
 import sqlite3
 import time
 from collections.abc import AsyncIterator
@@ -655,7 +656,7 @@ def metrics_summary() -> MetricsSummary:
 @app.get("/api/analytics/costs", response_model=CostAnalytics, tags=["analytics"])
 def cost_analytics() -> CostAnalytics:
     with db_connection() as connection:
-        rows = connection.execute("""SELECT provider, model, COUNT(*) AS runs, SUM(prompt_tokens + completion_tokens) AS tokens, SUM(cost_usd) AS total_cost_usd, AVG(latency_ms) AS average_latency_ms FROM (SELECT provider, model, prompt_tokens, completion_tokens, cost_usd, latency_ms FROM runs WHERE status = 'complete' UNION ALL SELECT provider, model, prompt_tokens, completion_tokens, cost_usd, latency_ms FROM comparison_results WHERE status = 'complete') GROUP BY provider, model ORDER BY total_cost_usd DESC, tokens DESC""").fetchall()
+        rows = connection.execute("""SELECT provider, model, COUNT(*) AS runs, SUM(prompt_tokens + completion_tokens) AS tokens, SUM(cost_usd) AS total_cost_usd, AVG(latency_ms) AS average_latency_ms FROM (SELECT provider, model, prompt_tokens, completion_tokens, cost_usd, latency_ms FROM runs WHERE status = 'complete' UNION ALL SELECT provider, model, prompt_tokens, completion_tokens, cost_usd, latency_ms FROM comparison_results WHERE status = 'complete' UNION ALL SELECT test_suite_runs.provider, test_suite_runs.model, test_case_runs.prompt_tokens, test_case_runs.completion_tokens, test_case_runs.cost_usd, test_case_runs.latency_ms FROM test_case_runs INNER JOIN test_suite_runs ON test_suite_runs.id = test_case_runs.suite_run_id WHERE test_case_runs.status = 'complete') GROUP BY provider, model ORDER BY total_cost_usd DESC, tokens DESC""").fetchall()
     breakdown = [CostBreakdown(provider=row["provider"], model=row["model"], runs=row["runs"], tokens=row["tokens"] or 0, total_cost_usd=row["total_cost_usd"], average_latency_ms=round(row["average_latency_ms"] or 0)) for row in rows]
     return CostAnalytics(total_runs=sum(item.runs for item in breakdown), total_tokens=sum(item.tokens for item in breakdown), total_cost_usd=round(sum(item.total_cost_usd or 0 for item in breakdown), 8) if any(item.total_cost_usd is not None for item in breakdown) else None, by_model=breakdown)
 
@@ -855,3 +856,349 @@ def export_conversation(conversation_id: str, format: Literal["json", "markdown"
         content = f"<!doctype html><html><head><meta charset='utf-8'><title>{html.escape(conversation.title)}</title><style>body{{font-family:system-ui;max-width:900px;margin:40px auto;padding:0 20px}}article{{border:1px solid #ddd;padding:16px;margin:12px 0}}pre{{white-space:pre-wrap;font:inherit}}</style></head><body><h1>{html.escape(conversation.title)}</h1>{messages_html}</body></html>"
         media_type, extension = "text/html", "html"
     return Response(content=content, media_type=f"{media_type}; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{filename_base or "conversation"}.{extension}"'})
+
+
+
+# --- Quality tooling: suites, human feedback, and local-only safety checks ---
+
+
+class RunFeedbackCreate(BaseModel):
+    rating: Literal[-1, 1]
+    comment: str | None = Field(default=None, max_length=2_000)
+
+
+class RunFeedback(BaseModel):
+    id: str
+    run_id: str
+    rating: Literal[-1, 1]
+    comment: str | None = None
+    created_at: datetime
+
+
+class SafetyScanRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=50_000)
+
+
+class SafetyFinding(BaseModel):
+    category: Literal["secret", "pii"]
+    kind: str
+    severity: Literal["medium", "high", "critical"]
+    start: int
+    end: int
+    masked_match: str
+
+
+class SafetyScan(BaseModel):
+    safe: bool
+    risk_level: Literal["none", "medium", "high", "critical"]
+    findings: list[SafetyFinding]
+    redacted_content: str
+
+
+class TestCaseCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    input: str = Field(min_length=1, max_length=50_000)
+    assertions: list[EvaluationAssertion] = Field(min_length=1, max_length=20)
+
+
+class TestSuiteCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+    prompt_template: str = Field(min_length=1, max_length=50_000)
+    system_prompt: str = Field(default="You are a helpful assistant.", max_length=20_000)
+    cases: list[TestCaseCreate] = Field(min_length=1, max_length=25)
+
+
+class TestSuiteCase(TestCaseCreate):
+    id: str
+    suite_id: str
+    created_at: datetime
+
+
+class AssertionOutcome(BaseModel):
+    assertion_type: str
+    expected: str | None = None
+    passed: bool
+    detail: str
+
+
+class TestCaseRun(BaseModel):
+    id: str
+    suite_run_id: str
+    case_id: str
+    case_name: str
+    response: str
+    status: Literal["complete", "error"]
+    passed: bool
+    latency_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float | None
+    token_source: Literal["estimated", "provider"]
+    error: str | None = None
+    outcomes: list[AssertionOutcome] = Field(default_factory=list)
+    created_at: datetime
+
+
+class TestSuiteRun(BaseModel):
+    id: str
+    suite_id: str
+    provider: str
+    model: str
+    mode: Literal["demo", "live"]
+    status: Literal["complete", "error"]
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    created_at: datetime
+    case_runs: list[TestCaseRun] = Field(default_factory=list)
+
+
+class TestSuite(BaseModel):
+    id: str
+    title: str
+    description: str
+    prompt_template: str
+    system_prompt: str
+    created_at: datetime
+    updated_at: datetime
+    cases: list[TestSuiteCase] = Field(default_factory=list)
+    runs: list[TestSuiteRun] = Field(default_factory=list)
+
+
+class TestSuiteRunRequest(BaseModel):
+    provider: str = "openai"
+    model: str = "gpt-4o"
+    mode: Literal["demo", "live"] = "demo"
+    temperature: float = Field(default=0.7, ge=0, le=2)
+    max_tokens: int = Field(default=1024, ge=1, le=16_384)
+
+
+def initialize_quality_database() -> None:
+    with db_connection() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS run_feedback (
+              id TEXT PRIMARY KEY,
+              run_id TEXT NOT NULL,
+              rating INTEGER NOT NULL CHECK(rating IN (-1, 1)),
+              comment TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(run_id) REFERENCES runs(id)
+            );
+            CREATE TABLE IF NOT EXISTS test_suites (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              prompt_template TEXT NOT NULL,
+              system_prompt TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS test_cases (
+              id TEXT PRIMARY KEY,
+              suite_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              input TEXT NOT NULL,
+              assertions_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(suite_id) REFERENCES test_suites(id)
+            );
+            CREATE TABLE IF NOT EXISTS test_suite_runs (
+              id TEXT PRIMARY KEY,
+              suite_id TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              mode TEXT NOT NULL,
+              status TEXT NOT NULL,
+              total_cases INTEGER NOT NULL,
+              passed_cases INTEGER NOT NULL,
+              failed_cases INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(suite_id) REFERENCES test_suites(id)
+            );
+            CREATE TABLE IF NOT EXISTS test_case_runs (
+              id TEXT PRIMARY KEY,
+              suite_run_id TEXT NOT NULL,
+              case_id TEXT NOT NULL,
+              case_name TEXT NOT NULL,
+              response TEXT NOT NULL,
+              status TEXT NOT NULL,
+              passed INTEGER NOT NULL,
+              latency_ms INTEGER NOT NULL,
+              prompt_tokens INTEGER NOT NULL,
+              completion_tokens INTEGER NOT NULL,
+              cost_usd REAL,
+              token_source TEXT NOT NULL,
+              error TEXT,
+              outcomes_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(suite_run_id) REFERENCES test_suite_runs(id),
+              FOREIGN KEY(case_id) REFERENCES test_cases(id)
+            );
+            CREATE INDEX IF NOT EXISTS run_feedback_run_id ON run_feedback(run_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS test_cases_suite_id ON test_cases(suite_id);
+            CREATE INDEX IF NOT EXISTS test_suite_runs_suite_id ON test_suite_runs(suite_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS test_case_runs_suite_run_id ON test_case_runs(suite_run_id);
+            """
+        )
+
+
+def row_to_test_case(row: sqlite3.Row) -> TestSuiteCase:
+    return TestSuiteCase(
+        id=row["id"], suite_id=row["suite_id"], name=row["name"], input=row["input"],
+        assertions=[EvaluationAssertion.model_validate(item) for item in json.loads(row["assertions_json"])], created_at=row["created_at"],
+    )
+
+
+def row_to_test_case_run(row: sqlite3.Row) -> TestCaseRun:
+    return TestCaseRun(
+        id=row["id"], suite_run_id=row["suite_run_id"], case_id=row["case_id"], case_name=row["case_name"], response=row["response"],
+        status=row["status"], passed=bool(row["passed"]), latency_ms=row["latency_ms"], prompt_tokens=row["prompt_tokens"],
+        completion_tokens=row["completion_tokens"], cost_usd=row["cost_usd"], token_source=row["token_source"], error=row["error"],
+        outcomes=[AssertionOutcome.model_validate(item) for item in json.loads(row["outcomes_json"])], created_at=row["created_at"],
+    )
+
+
+def get_test_suite_record(suite_id: str, include_runs: bool = True) -> TestSuite | None:
+    with db_connection() as connection:
+        suite_row = connection.execute("SELECT * FROM test_suites WHERE id = ?", (suite_id,)).fetchone()
+        if suite_row is None:
+            return None
+        case_rows = connection.execute("SELECT * FROM test_cases WHERE suite_id = ? ORDER BY created_at", (suite_id,)).fetchall()
+        runs: list[TestSuiteRun] = []
+        if include_runs:
+            run_rows = connection.execute("SELECT * FROM test_suite_runs WHERE suite_id = ? ORDER BY created_at DESC LIMIT 20", (suite_id,)).fetchall()
+            if run_rows:
+                run_ids = [row["id"] for row in run_rows]
+                placeholders = ",".join("?" for _ in run_ids)
+                case_run_rows = connection.execute(f"SELECT * FROM test_case_runs WHERE suite_run_id IN ({placeholders}) ORDER BY created_at", run_ids).fetchall()
+                grouped_case_runs: dict[str, list[TestCaseRun]] = {}
+                for case_run_row in case_run_rows:
+                    case_run = row_to_test_case_run(case_run_row)
+                    grouped_case_runs.setdefault(case_run.suite_run_id, []).append(case_run)
+                runs = [TestSuiteRun(id=row["id"], suite_id=row["suite_id"], provider=row["provider"], model=row["model"], mode=row["mode"], status=row["status"], total_cases=row["total_cases"], passed_cases=row["passed_cases"], failed_cases=row["failed_cases"], created_at=row["created_at"], case_runs=grouped_case_runs.get(row["id"], [])) for row in run_rows]
+    return TestSuite(id=suite_row["id"], title=suite_row["title"], description=suite_row["description"], prompt_template=suite_row["prompt_template"], system_prompt=suite_row["system_prompt"], created_at=suite_row["created_at"], updated_at=suite_row["updated_at"], cases=[row_to_test_case(row) for row in case_rows], runs=runs)
+
+
+async def run_test_case(suite_run_id: str, suite: TestSuite, case: TestSuiteCase, request: TestSuiteRunRequest, spec: ProviderSpec) -> TestCaseRun:
+    prompt = suite.prompt_template.replace("{{input}}", case.input)
+    chat_request = ChatRequest(provider=request.provider, model=request.model, prompt=prompt, system_prompt=suite.system_prompt, temperature=request.temperature, max_tokens=request.max_tokens, mode=request.mode)
+    started_at = time.perf_counter()
+    text = ""
+    usage_state: dict[str, Any] = {}
+    try:
+        source = demo_chunks(chat_request) if request.mode == "demo" else live_chunks(chat_request, spec, usage_state)
+        async for token in source:
+            text += token
+        outcomes = [AssertionOutcome(assertion_type=assertion.type, expected=assertion.value, passed=passed, detail=detail) for assertion in case.assertions for passed, detail in [evaluate_assertion(text.strip(), assertion)]]
+        prompt_tokens = int(usage_state.get("prompt_tokens") or estimate_tokens(f"{suite.system_prompt} {prompt}"))
+        completion_tokens = int(usage_state.get("completion_tokens") or estimate_tokens(text))
+        return TestCaseRun(id=str(uuid4()), suite_run_id=suite_run_id, case_id=case.id, case_name=case.name, response=text.strip(), status="complete", passed=all(outcome.passed for outcome in outcomes), latency_ms=round((time.perf_counter() - started_at) * 1000), prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, cost_usd=estimate_cost_usd(request.model, prompt_tokens, completion_tokens), token_source="provider" if usage_state.get("prompt_tokens") is not None else "estimated", outcomes=outcomes, created_at=now_string())
+    except Exception as error:
+        return TestCaseRun(id=str(uuid4()), suite_run_id=suite_run_id, case_id=case.id, case_name=case.name, response=text.strip(), status="error", passed=False, latency_ms=round((time.perf_counter() - started_at) * 1000), prompt_tokens=estimate_tokens(f"{suite.system_prompt} {prompt}"), completion_tokens=estimate_tokens(text), cost_usd=None, token_source="estimated", error=str(error) or "Provider execution failed.", outcomes=[], created_at=now_string())
+
+
+SAFETY_PATTERNS: tuple[tuple[str, Literal["secret", "pii"], Literal["medium", "high", "critical"], re.Pattern[str]], ...] = (
+    ("OpenAI-style API key", "secret", "critical", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
+    ("AWS access key", "secret", "critical", re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")),
+    ("Private key block", "secret", "critical", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----")),
+    ("Credential assignment", "secret", "high", re.compile(r"(?i)\b(?:api[_-]?key|access[_-]?token|password|secret)\s*[:=]\s*[^\s'\"]{8,}")),
+    ("Email address", "pii", "medium", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)),
+    ("Phone number", "pii", "medium", re.compile(r"(?<!\w)(?:\+?\d[\d(). -]{8,}\d)(?!\w)")),
+)
+
+
+def scan_sensitive_content(content: str) -> SafetyScan:
+    findings: list[SafetyFinding] = []
+    spans: list[tuple[int, int]] = []
+    for kind, category, severity, pattern in SAFETY_PATTERNS:
+        for match in pattern.finditer(content):
+            start, end = match.span()
+            if any(start < existing_end and end > existing_start for existing_start, existing_end in spans):
+                continue
+            spans.append((start, end))
+            findings.append(SafetyFinding(category=category, kind=kind, severity=severity, start=start, end=end, masked_match=f"[REDACTED {category}]") )
+    findings.sort(key=lambda item: item.start)
+    redacted = content
+    for finding in reversed(findings):
+        redacted = redacted[:finding.start] + finding.masked_match + redacted[finding.end:]
+    severities = {finding.severity for finding in findings}
+    risk_level: Literal["none", "medium", "high", "critical"] = "critical" if "critical" in severities else "high" if "high" in severities else "medium" if "medium" in severities else "none"
+    return SafetyScan(safe=not findings, risk_level=risk_level, findings=findings, redacted_content=redacted)
+
+
+initialize_quality_database()
+
+
+@app.post("/api/runs/{run_id}/feedback", response_model=RunFeedback, status_code=201, tags=["feedback"])
+def create_run_feedback(run_id: str, payload: RunFeedbackCreate) -> RunFeedback:
+    with db_connection() as connection:
+        run = connection.execute("SELECT id FROM runs WHERE id = ?", (run_id,)).fetchone()
+        if run is None:
+            raise HTTPException(status_code=404, detail="Run not found")
+        feedback = RunFeedback(id=str(uuid4()), run_id=run_id, rating=payload.rating, comment=payload.comment.strip() if payload.comment else None, created_at=now_string())
+        connection.execute("INSERT INTO run_feedback (id, run_id, rating, comment, created_at) VALUES (?, ?, ?, ?, ?)", (feedback.id, feedback.run_id, feedback.rating, feedback.comment, feedback.created_at.isoformat()))
+    return feedback
+
+
+@app.get("/api/runs/{run_id}/feedback", response_model=list[RunFeedback], tags=["feedback"])
+def list_run_feedback(run_id: str) -> list[RunFeedback]:
+    with db_connection() as connection:
+        rows = connection.execute("SELECT * FROM run_feedback WHERE run_id = ? ORDER BY created_at DESC", (run_id,)).fetchall()
+    return [RunFeedback(id=row["id"], run_id=row["run_id"], rating=row["rating"], comment=row["comment"], created_at=row["created_at"]) for row in rows]
+
+
+@app.post("/api/safety/scan", response_model=SafetyScan, tags=["safety"])
+def scan_safety(payload: SafetyScanRequest) -> SafetyScan:
+    """Scan in process only. Prompt content and scan findings are deliberately not persisted."""
+    return scan_sensitive_content(payload.content)
+
+
+@app.get("/api/test-suites", response_model=list[TestSuite], tags=["testing"])
+def list_test_suites() -> list[TestSuite]:
+    with db_connection() as connection:
+        rows = connection.execute("SELECT id FROM test_suites ORDER BY updated_at DESC LIMIT 50").fetchall()
+    return [suite for row in rows if (suite := get_test_suite_record(row["id"])) is not None]
+
+
+@app.post("/api/test-suites", response_model=TestSuite, status_code=201, tags=["testing"])
+def create_test_suite(payload: TestSuiteCreate) -> TestSuite:
+    suite_id, timestamp = str(uuid4()), now_string()
+    with db_connection() as connection:
+        connection.execute("INSERT INTO test_suites (id, title, description, prompt_template, system_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (suite_id, payload.title.strip(), payload.description.strip(), payload.prompt_template, payload.system_prompt, timestamp, timestamp))
+        for case in payload.cases:
+            connection.execute("INSERT INTO test_cases (id, suite_id, name, input, assertions_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", (str(uuid4()), suite_id, case.name.strip(), case.input, json.dumps([assertion.model_dump() for assertion in case.assertions]), timestamp))
+    suite = get_test_suite_record(suite_id)
+    assert suite is not None
+    return suite
+
+
+@app.get("/api/test-suites/{suite_id}", response_model=TestSuite, tags=["testing"])
+def get_test_suite(suite_id: str) -> TestSuite:
+    suite = get_test_suite_record(suite_id)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Test suite not found")
+    return suite
+
+
+@app.post("/api/test-suites/{suite_id}/runs", response_model=TestSuiteRun, status_code=201, tags=["testing"])
+async def run_test_suite(suite_id: str, payload: TestSuiteRunRequest) -> TestSuiteRun:
+    suite = get_test_suite_record(suite_id, include_runs=False)
+    if suite is None:
+        raise HTTPException(status_code=404, detail="Test suite not found")
+    spec = PROVIDER_BY_ID.get(payload.provider)
+    if spec is None:
+        raise HTTPException(status_code=422, detail=f"Unknown provider: {payload.provider}")
+    if payload.mode == "live" and not spec.is_configured():
+        raise HTTPException(status_code=409, detail=f"{spec.name} is not configured for Live mode")
+    suite_run_id, timestamp = str(uuid4()), now_string()
+    case_runs = await asyncio.gather(*(run_test_case(suite_run_id, suite, case, payload, spec) for case in suite.cases))
+    completed = all(case_run.status == "complete" for case_run in case_runs)
+    run = TestSuiteRun(id=suite_run_id, suite_id=suite_id, provider=payload.provider, model=payload.model, mode=payload.mode, status="complete" if completed else "error", total_cases=len(case_runs), passed_cases=sum(case_run.passed for case_run in case_runs), failed_cases=sum(not case_run.passed for case_run in case_runs), created_at=timestamp, case_runs=case_runs)
+    with db_connection() as connection:
+        connection.execute("INSERT INTO test_suite_runs (id, suite_id, provider, model, mode, status, total_cases, passed_cases, failed_cases, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (run.id, run.suite_id, run.provider, run.model, run.mode, run.status, run.total_cases, run.passed_cases, run.failed_cases, run.created_at.isoformat()))
+        connection.execute("UPDATE test_suites SET updated_at = ? WHERE id = ?", (now_string(), suite_id))
+        for case_run in case_runs:
+            connection.execute("INSERT INTO test_case_runs (id, suite_run_id, case_id, case_name, response, status, passed, latency_ms, prompt_tokens, completion_tokens, cost_usd, token_source, error, outcomes_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (case_run.id, case_run.suite_run_id, case_run.case_id, case_run.case_name, case_run.response, case_run.status, int(case_run.passed), case_run.latency_ms, case_run.prompt_tokens, case_run.completion_tokens, case_run.cost_usd, case_run.token_source, case_run.error, json.dumps([outcome.model_dump() for outcome in case_run.outcomes]), case_run.created_at.isoformat()))
+    return run
