@@ -112,24 +112,23 @@ PromptDeck persists conversations, messages, run latency, token counts, and avai
 
 ## ✨ Features
 
-**Shipped (v0.1–v0.2):**
+**Shipped (v0.1–v0.3):**
 - 🤖 Multi-provider chat (OpenAI, Gemini, Claude, Groq, Ollama, and any OpenAI-compatible API via LiteLLM)
 - ⚡ Prompt playground — editor, markdown, syntax highlighting, variables, temperature/token controls
 - 🔥 Streaming responses
 - 💬 Conversation history — search, filter, tags, favorites
 - 🔐 API key management
 - 🌙 Dark/light mode, responsive UI
-
-**In progress (v0.2–v0.3):**
-- 🔀 Side-by-side model comparison (quality, latency, tokens, cost, time-to-first-token)
-- 📚 Reusable prompt library (DevOps, Kubernetes, AWS, Terraform, SQL, and more categories)
-- 💰 Cost tracking per provider/model/project
-- 📝 Prompt versioning — history, diff, rollback, tags ("git for prompts")
+- 🔀 Side-by-side model comparison with stored response, latency, token, and cost data
+- 📚 Reusable prompt library with categories, tags, immutable revisions, and rollback
+- 💰 Cost analytics per provider/model across playground runs and comparisons
+- 📝 Assertion-based response evaluations (contains, absence, exact match, JSON validity, and length)
+- 📤 Conversation exports in Markdown, JSON, CSV, and HTML
 
 **Planned (v0.4+):**
-- 📊 Analytics dashboard (usage, success/error rate, response time)
-- 📈 Automated evaluations — hallucination detection, groundedness, toxicity, JSON validation, faithfulness
-- 📤 Export to Markdown/JSON/HTML/PDF/CSV
+- 📊 Expanded analytics dashboard (usage trends, success/error rate, response-time charts)
+- 📈 Advanced automated evaluations — hallucination detection, groundedness, toxicity, and faithfulness
+- 📄 PDF reports and batch evaluation exports
 - 🔌 LangGraph workflows, MCP support, plugin system
 
 See the full breakdown in [Roadmap](#️-roadmap).
@@ -207,9 +206,9 @@ promptdeck/
 | Version | Focus |
 |---|---|
 | **v0.1** ✅ | Multi-provider chat, streaming, API keys, conversation history |
-| **v0.2** 🔄 | Model comparison, prompt library & templates, cost tracking |
-| **v0.3** ⬜ | Prompt versioning, export, analytics dashboard |
-| **v0.4** ⬜ | AI evaluations, batch testing, benchmarks, reports |
+| **v0.2** ✅ | Model comparison, prompt library, cost tracking |
+| **v0.3** ✅ | Prompt versioning, exports, assertion evaluations, analytics |
+| **v0.4** ⬜ | Advanced automated evaluations, batch testing, benchmarks, reports |
 | **v0.5** ⬜ | LangGraph workflows, MCP support, plugins, AI gateway |
 | **v1.0** ⬜ | Teams, workspaces, RBAC, audit logs, usage limits |
 

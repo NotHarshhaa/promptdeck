@@ -4,6 +4,8 @@ import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "re
 import {
   Activity,
   Atom,
+  BarChart3,
+  BookOpen,
   Bot,
   Braces,
   Check,
@@ -13,8 +15,11 @@ import {
   Command,
   Copy,
   Cpu,
+  Download,
   FileText,
+  GitCompare,
   History,
+  ListChecks,
   PanelLeft,
   Plus,
   Radio,
@@ -27,6 +32,7 @@ import {
   X,
 } from "lucide-react"
 
+import { FeatureWorkspace, type FeatureView } from "@/components/feature-workspace"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -46,7 +52,7 @@ import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip"
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
 type RunMode = "demo" | "live"
-type NavigationItem = "Playground" | "Run history" | "Providers"
+type NavigationItem = "Playground" | "Run history" | "Providers" | FeatureView
 
 type Provider = {
   id: string
@@ -115,6 +121,11 @@ const emptySummary: MetricsSummary = {
 
 const navigation: { label: NavigationItem; icon: typeof Atom }[] = [
   { label: "Playground", icon: Atom },
+  { label: "Compare models", icon: GitCompare },
+  { label: "Prompt library", icon: BookOpen },
+  { label: "Cost analytics", icon: BarChart3 },
+  { label: "Evaluations", icon: ListChecks },
+  { label: "Exports", icon: Download },
   { label: "Run history", icon: History },
   { label: "Providers", icon: Radio },
 ]
@@ -585,13 +596,26 @@ export default function Page() {
                 </div>
               </div>
             </div>
-          ) : (
+          ) : activeNav === "Providers" ? (
             <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
               <div className="mx-auto max-w-4xl"><div className="flex flex-wrap items-end justify-between gap-3"><div><h1 className="text-lg font-semibold tracking-tight">Providers</h1><p className="mt-1 text-xs text-muted-foreground">Choose a route for Demo mode or view the environment key needed for Live mode.</p></div><Button onPress={() => void refreshControlPlane()} variant="outline" size="sm" isDisabled={isRefreshing}><RefreshCw className={isRefreshing ? "animate-spin" : ""} /> Refresh status</Button></div>
                 <div className="mt-6 grid gap-3 md:grid-cols-2">{providers.map((item) => <Card key={item.id} className={`border ${selectedProviderId === item.id ? "border-foreground" : ""}`}><CardHeader className="border-b"><div className="flex items-center justify-between gap-3"><CardTitle>{item.name}</CardTitle><Badge variant={item.configured ? "default" : "outline"}>{item.configured ? "Live ready" : "Demo ready"}</Badge></div><CardDescription className="font-mono">{item.model}</CardDescription></CardHeader><CardContent className="space-y-3 pt-4"><div><p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Live route</p><p className="mt-1 break-all font-mono text-xs">{item.live_model}</p></div><div><p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Server configuration</p><p className="mt-1 text-xs text-muted-foreground">{item.configured ? "Configured on the API server." : `${item.required_env} is not configured.`}</p></div><div className="flex flex-wrap gap-2"><Button onPress={() => selectProvider(item.id)} size="sm">Use in playground <ChevronRight /></Button>{item.required_env && <Button onPress={() => void copyText(`${item.required_env}=`, `env-${item.id}`)} variant="outline" size="sm">{copiedValue === `env-${item.id}` ? <><Check /> Copied</> : <><Copy /> Copy env key</>}</Button>}</div></CardContent></Card>)}</div>
                 {!providers.length && <Card className="mt-6 border"><CardContent className="py-8 text-center text-xs text-muted-foreground">No provider routes are available. Refresh after starting the local API.</CardContent></Card>}
               </div>
             </div>
+          ) : (
+            <FeatureWorkspace
+              view={activeNav as FeatureView}
+              providers={providers}
+              conversations={conversations}
+              onRefresh={refreshControlPlane}
+              onUsePrompt={(content, resolvedSystemPrompt) => {
+                setPrompt(content)
+                setSystemPrompt(resolvedSystemPrompt)
+                setActiveNav("Playground")
+                setNotice("Prompt template loaded into the playground.")
+              }}
+            />
           )}
         </section>
 
