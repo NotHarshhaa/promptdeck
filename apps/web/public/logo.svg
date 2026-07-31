@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="PromptDeck">
+  <title>PromptDeck</title>
+  <defs>
+    <linearGradient id="pdTile" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C3AED" />
+      <stop offset="0.55" stop-color="#A21CAF" />
+      <stop offset="1" stop-color="#DB2777" />
+    </linearGradient>
+  </defs>
+
+  <!-- brand tile -->
+  <rect width="512" height="512" rx="112" fill="url(#pdTile)" />
+
+  <!-- the "deck": staggered stack of prompt cards -->
+  <rect x="152" y="100" width="288" height="56" rx="28" fill="#FFFFFF" opacity="0.28" />
+  <rect x="132" y="140" width="288" height="56" rx="28" fill="#FFFFFF" opacity="0.52" />
+  <rect x="112" y="180" width="288" height="224" rx="32" fill="#FFFFFF" />
+
+  <!-- the "prompt": chevron + caret bar -->
+  <g fill="none" stroke="#3B0764" stroke-width="34" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="188,244 236,292 188,340" />
+    <line x1="268" y1="340" x2="322" y2="340" />
+  </g>
+</svg>

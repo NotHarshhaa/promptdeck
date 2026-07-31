@@ -1,8 +1,8 @@
-# 🚀 PromptDeck
-
 <p align="center">
-  <img src="./assets/logo.png" alt="PromptDeck" width="180"/>
+  <img src="./assets/logo.png" alt="PromptDeck logo" width="132"/>
 </p>
+
+<h1 align="center">🚀 PromptDeck</h1>
 
 <h3 align="center">
 The Open Source Platform for Building, Testing, Comparing & Evaluating LLM Prompts
@@ -195,6 +195,7 @@ promptdeck/
 │   ├── prompts/
 │   ├── evaluation/
 │   └── shared/
+├── assets/            # Brand assets (logo SVG + PNG)
 ├── docker/
 ├── kubernetes/
 ├── scripts/

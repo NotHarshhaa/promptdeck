@@ -37,6 +37,7 @@ import {
 } from "lucide-react"
 
 import { FeatureWorkspace, type FeatureView } from "@/components/feature-workspace"
+import { PromptDeckLogo } from "@/components/promptdeck-logo"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -502,7 +503,7 @@ export default function Page() {
     <main className="min-h-svh bg-background text-foreground">
       <header className="flex h-14 items-center justify-between border-b px-4 sm:px-6">
         <div className="flex items-center gap-3">
-          <div className="grid size-7 place-items-center border bg-foreground text-xs font-bold text-background">P</div>
+          <PromptDeckLogo className="size-7" />
           <div>
             <p className="text-sm font-semibold tracking-tight">PromptDeck</p>
             <p className="text-[10px] tracking-[0.14em] text-muted-foreground uppercase">Prompt workspace</p>
@@ -687,7 +688,7 @@ export default function Page() {
         </aside>
       </div>
 
-      {isNavigationOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-foreground/20" onClick={() => setIsNavigationOpen(false)} aria-label="Close navigation" /><aside className="relative flex h-full w-[min(20rem,88vw)] flex-col border-r bg-background p-3"><div className="mb-4 flex items-center justify-between"><p className="text-sm font-semibold">Workspace</p><Button onPress={() => setIsNavigationOpen(false)} variant="ghost" size="icon-sm" aria-label="Close navigation"><X /></Button></div><SidebarContent activeNav={activeNav} conversationId={conversationId} conversations={conversations} conversationSearch={conversationSearch} onConversationSearchChange={setConversationSearch} onNavigate={navigate} onOpenConversation={(id) => void openConversation(id)} onStartNewRun={openNewRun} /></aside></div>}
+      {isNavigationOpen && <div className="fixed inset-0 z-50 lg:hidden"><button className="absolute inset-0 bg-foreground/20" onClick={() => setIsNavigationOpen(false)} aria-label="Close navigation" /><aside className="relative flex h-full w-[min(20rem,88vw)] flex-col border-r bg-background p-3"><div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><PromptDeckLogo className="size-6" gradientId="promptdeck-logo-gradient-nav" /><p className="text-sm font-semibold">Workspace</p></div><Button onPress={() => setIsNavigationOpen(false)} variant="ghost" size="icon-sm" aria-label="Close navigation"><X /></Button></div><SidebarContent activeNav={activeNav} conversationId={conversationId} conversations={conversations} conversationSearch={conversationSearch} onConversationSearchChange={setConversationSearch} onNavigate={navigate} onOpenConversation={(id) => void openConversation(id)} onStartNewRun={openNewRun} /></aside></div>}
     </main>
   )
 }
