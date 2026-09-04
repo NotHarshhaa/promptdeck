@@ -1,7 +1,24 @@
 "use client"
 
 import { type FormEvent, useEffect, useMemo, useState } from "react"
-import { BarChart3, BookOpen, CheckCircle2, Download, GitCompare, ListChecks, Plus, RefreshCw, RotateCcw, Save, XCircle } from "lucide-react"
+import {
+  BarChart3,
+  BookOpen,
+  Check,
+  CheckCircle2,
+  Copy,
+  Download,
+  GitCompare,
+  ListChecks,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  SendHorizontal,
+  Trash2,
+  Zap,
+  XCircle,
+} from "lucide-react"
 
 import { QualityWorkspace, type QualityView } from "@/components/quality-workspace"
 import { Badge } from "@/components/ui/badge"
@@ -9,6 +26,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipTrigger } from "@/components/ui/tooltip"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 
@@ -18,18 +36,100 @@ type Provider = { id: string; name: string; model: string; configured: boolean }
 type Conversation = { id: string; title: string; updated_at: string }
 type RunMode = "demo" | "live"
 
-type ComparisonResult = { id: string; provider: string; model: string; response: string; status: "complete" | "error"; latency_ms: number; prompt_tokens: number; completion_tokens: number; cost_usd: number | null; error?: string | null }
-type Comparison = { id: string; title: string; prompt: string; system_prompt: string; mode: RunMode; created_at: string; results: ComparisonResult[] }
-type PromptRevision = { id: string; version: number; content: string; system_prompt: string; change_note?: string | null; created_at: string }
-type PromptTemplate = { id: string; title: string; description: string; category: string; tags: string[]; content: string; system_prompt: string; latest_version: number; updated_at: string; revisions: PromptRevision[] }
-type CostBreakdown = { provider: string; model: string; runs: number; tokens: number; total_cost_usd: number | null; average_latency_ms: number }
-type CostAnalytics = { total_runs: number; total_tokens: number; total_cost_usd: number | null; by_model: CostBreakdown[] }
-type EvaluationResult = { id: string; assertion_type: string; expected: string | null; passed: boolean; detail: string }
-type Evaluation = { id: string; title: string; passed: boolean; created_at: string; results: EvaluationResult[] }
+type ComparisonResult = {
+  id: string
+  provider: string
+  model: string
+  response: string
+  status: "complete" | "error"
+  latency_ms: number
+  prompt_tokens: number
+  completion_tokens: number
+  cost_usd: number | null
+  error?: string | null
+}
 
-type PromptDraft = { title: string; description: string; category: string; tags: string; content: string; system_prompt: string }
+type Comparison = {
+  id: string
+  title: string
+  prompt: string
+  system_prompt: string
+  mode: RunMode
+  created_at: string
+  results: ComparisonResult[]
+}
 
-const blankDraft: PromptDraft = { title: "", description: "", category: "General", tags: "", content: "", system_prompt: "You are a helpful assistant." }
+type PromptRevision = {
+  id: string
+  version: number
+  content: string
+  system_prompt: string
+  change_note?: string | null
+  created_at: string
+}
+
+type PromptTemplate = {
+  id: string
+  title: string
+  description: string
+  category: string
+  tags: string[]
+  content: string
+  system_prompt: string
+  latest_version: number
+  updated_at: string
+  revisions: PromptRevision[]
+}
+
+type CostBreakdown = {
+  provider: string
+  model: string
+  runs: number
+  tokens: number
+  total_cost_usd: number | null
+  average_latency_ms: number
+}
+
+type CostAnalytics = {
+  total_runs: number
+  total_tokens: number
+  total_cost_usd: number | null
+  by_model: CostBreakdown[]
+}
+
+type EvaluationResult = {
+  id: string
+  assertion_type: string
+  expected: string | null
+  passed: boolean
+  detail: string
+}
+
+type Evaluation = {
+  id: string
+  title: string
+  passed: boolean
+  created_at: string
+  results: EvaluationResult[]
+}
+
+type PromptDraft = {
+  title: string
+  description: string
+  category: string
+  tags: string
+  content: string
+  system_prompt: string
+}
+
+const blankDraft: PromptDraft = {
+  title: "",
+  description: "",
+  category: "General",
+  tags: "",
+  content: "",
+  system_prompt: "You are a helpful assistant.",
+}
 
 function formatCost(value: number | null) {
   return value === null ? "—" : `$${value.toFixed(value < 0.01 ? 4 : 2)}`
@@ -52,27 +152,55 @@ async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, onRefresh }: { view: FeatureView; providers: Provider[]; conversations: Conversation[]; onUsePrompt: (content: string, systemPrompt: string) => void; onRefresh: () => Promise<void> }) {
+function FeatureWorkspaceContent({
+  view,
+  providers,
+  conversations,
+  onUsePrompt,
+  onRefresh,
+}: {
+  view: FeatureView
+  providers: Provider[]
+  conversations: Conversation[]
+  onUsePrompt: (content: string, systemPrompt: string) => void
+  onRefresh: () => Promise<void>
+}) {
   const [notice, setNotice] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
+  // Compare models
   const [comparisons, setComparisons] = useState<Comparison[]>([])
   const [comparisonPrompt, setComparisonPrompt] = useState("Explain a safe canary deployment strategy for a production API.")
   const [comparisonSystem, setComparisonSystem] = useState("You are a senior platform engineer. Be concise and concrete.")
   const [comparisonMode, setComparisonMode] = useState<RunMode>("demo")
   const [selectedTargets, setSelectedTargets] = useState<string[]>(["openai", "anthropic"])
+
+  // Prompt library
   const [prompts, setPrompts] = useState<PromptTemplate[]>([])
   const [selectedPrompt, setSelectedPrompt] = useState<PromptTemplate | null>(null)
   const [draft, setDraft] = useState<PromptDraft>(blankDraft)
+  const [promptSearch, setPromptSearch] = useState("")
+  const [selectedCategory, setSelectedCategory] = useState("all")
+
+  // Cost analytics
   const [analytics, setAnalytics] = useState<CostAnalytics | null>(null)
+
+  // Evaluations
   const [evaluations, setEvaluations] = useState<Evaluation[]>([])
   const [evaluationTitle, setEvaluationTitle] = useState("Response evaluation")
   const [evaluationOutput, setEvaluationOutput] = useState("")
   const [assertionType, setAssertionType] = useState("contains")
   const [assertionValue, setAssertionValue] = useState("")
+
+  // Exports
   const [exportConversationId, setExportConversationId] = useState("")
   const [exportFormat, setExportFormat] = useState("markdown")
 
-  const selectedProviderTargets = useMemo(() => providers.filter((provider) => selectedTargets.includes(provider.id)), [providers, selectedTargets])
+  const selectedProviderTargets = useMemo(
+    () => providers.filter((provider) => selectedTargets.includes(provider.id)),
+    [providers, selectedTargets]
+  )
 
   async function loadComparisons() {
     const data = await requestJson<Comparison[]>("/api/comparisons")
@@ -108,7 +236,9 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
   }, [view])
 
   function toggleTarget(id: string) {
-    setSelectedTargets((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 5 ? [...current, id] : current)
+    setSelectedTargets((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : current.length < 5 ? [...current, id] : current
+    )
   }
 
   async function submitComparison(event: FormEvent<HTMLFormElement>) {
@@ -121,8 +251,15 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
     setNotice(null)
     try {
       const result = await requestJson<Comparison>("/api/comparisons", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: comparisonPrompt.slice(0, 80) || "Model comparison", prompt: comparisonPrompt, system_prompt: comparisonSystem, mode: comparisonMode, targets: selectedProviderTargets.map((provider) => ({ provider: provider.id, model: provider.model })) }),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: comparisonPrompt.slice(0, 80) || "Model comparison",
+          prompt: comparisonPrompt,
+          system_prompt: comparisonSystem,
+          mode: comparisonMode,
+          targets: selectedProviderTargets.map((provider) => ({ provider: provider.id, model: provider.model })),
+        }),
       })
       setComparisons((current) => [result, ...current])
       await onRefresh()
@@ -133,11 +270,28 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
     }
   }
 
+  async function deleteComparison(id: string) {
+    try {
+      await requestJson(`/api/comparisons/${id}`, { method: "DELETE" })
+      setComparisons((current) => current.filter((item) => item.id !== id))
+      setNotice("Comparison deleted.")
+    } catch (error) {
+      setNotice(errorText(error))
+    }
+  }
+
   async function selectPrompt(id: string) {
     try {
       const prompt = await requestJson<PromptTemplate>(`/api/prompts/${id}`)
       setSelectedPrompt(prompt)
-      setDraft({ title: prompt.title, description: prompt.description, category: prompt.category, tags: prompt.tags.join(", "), content: prompt.content, system_prompt: prompt.system_prompt })
+      setDraft({
+        title: prompt.title,
+        description: prompt.description,
+        category: prompt.category,
+        tags: prompt.tags.join(", "),
+        content: prompt.content,
+        system_prompt: prompt.system_prompt,
+      })
     } catch (error) {
       setNotice(errorText(error))
     }
@@ -153,9 +307,27 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
     event.preventDefault()
     setIsLoading(true)
     setNotice(null)
-    const body = { title: draft.title, description: draft.description, category: draft.category, tags: draft.tags.split(",").map((tag) => tag.trim()).filter(Boolean), content: draft.content, system_prompt: draft.system_prompt, change_note: selectedPrompt ? "Edited in workspace" : "Initial version" }
+    const body = {
+      title: draft.title,
+      description: draft.description,
+      category: draft.category,
+      tags: draft.tags
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
+      content: draft.content,
+      system_prompt: draft.system_prompt,
+      change_note: selectedPrompt ? "Edited in workspace" : "Initial version",
+    }
     try {
-      const saved = await requestJson<PromptTemplate>(selectedPrompt ? `/api/prompts/${selectedPrompt.id}` : "/api/prompts", { method: selectedPrompt ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      const saved = await requestJson<PromptTemplate>(
+        selectedPrompt ? `/api/prompts/${selectedPrompt.id}` : "/api/prompts",
+        {
+          method: selectedPrompt ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }
+      )
       setSelectedPrompt(saved)
       setPrompts((current) => [saved, ...current.filter((item) => item.id !== saved.id)])
       setNotice(`Saved ${saved.title} as version ${saved.latest_version}.`)
@@ -166,13 +338,36 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
     }
   }
 
+  async function deletePrompt(id: string) {
+    try {
+      await requestJson(`/api/prompts/${id}`, { method: "DELETE" })
+      setPrompts((current) => current.filter((item) => item.id !== id))
+      if (selectedPrompt?.id === id) {
+        newPrompt()
+      }
+      setNotice("Prompt template deleted.")
+    } catch (error) {
+      setNotice(errorText(error))
+    }
+  }
+
   async function restoreRevision(version: number) {
     if (!selectedPrompt) return
     setIsLoading(true)
     try {
-      const restored = await requestJson<PromptTemplate>(`/api/prompts/${selectedPrompt.id}/revisions/${version}/restore`, { method: "POST" })
+      const restored = await requestJson<PromptTemplate>(
+        `/api/prompts/${selectedPrompt.id}/revisions/${version}/restore`,
+        { method: "POST" }
+      )
       setSelectedPrompt(restored)
-      setDraft({ title: restored.title, description: restored.description, category: restored.category, tags: restored.tags.join(", "), content: restored.content, system_prompt: restored.system_prompt })
+      setDraft({
+        title: restored.title,
+        description: restored.description,
+        category: restored.category,
+        tags: restored.tags.join(", "),
+        content: restored.content,
+        system_prompt: restored.system_prompt,
+      })
       setPrompts((current) => [restored, ...current.filter((item) => item.id !== restored.id)])
       setNotice(`Restored version ${version} into new version ${restored.latest_version}.`)
     } catch (error) {
@@ -187,12 +382,30 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
     setIsLoading(true)
     setNotice(null)
     try {
-      const result = await requestJson<Evaluation>("/api/evaluations", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: evaluationTitle, output: evaluationOutput, assertions: [{ type: assertionType, value: assertionType === "json_valid" ? null : assertionValue }] }) })
+      const result = await requestJson<Evaluation>("/api/evaluations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: evaluationTitle,
+          output: evaluationOutput,
+          assertions: [{ type: assertionType, value: assertionType === "json_valid" ? null : assertionValue }],
+        }),
+      })
       setEvaluations((current) => [result, ...current])
     } catch (error) {
       setNotice(errorText(error))
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function deleteEvaluation(id: string) {
+    try {
+      await requestJson(`/api/evaluations/${id}`, { method: "DELETE" })
+      setEvaluations((current) => current.filter((item) => item.id !== id))
+      setNotice("Evaluation record deleted.")
+    } catch (error) {
+      setNotice(errorText(error))
     }
   }
 
@@ -220,30 +433,743 @@ function FeatureWorkspaceContent({ view, providers, conversations, onUsePrompt, 
     }
   }
 
-  const header = view === "Compare models" ? { icon: GitCompare, title: "Compare models", description: "Run the same resolved prompt across providers and retain observed outcomes." } : view === "Prompt library" ? { icon: BookOpen, title: "Prompt library", description: "Store reusable templates with version history and one-click rollback." } : view === "Cost analytics" ? { icon: BarChart3, title: "Cost analytics", description: "Aggregate tokens, latency, and estimated known-model spend across runs and comparisons." } : view === "Evaluations" ? { icon: ListChecks, title: "Evaluations", description: "Persist deterministic assertions against a response for repeatable checks." } : { icon: Download, title: "Exports", description: "Download a saved conversation and its run telemetry in a portable format." }
+  const promptCategories = useMemo(() => {
+    const set = new Set(prompts.map((p) => p.category).filter(Boolean))
+    return ["all", ...Array.from(set)]
+  }, [prompts])
+
+  const filteredPrompts = useMemo(() => {
+    return prompts.filter((prompt) => {
+      const matchesSearch =
+        !promptSearch.trim() ||
+        prompt.title.toLowerCase().includes(promptSearch.toLowerCase()) ||
+        prompt.tags.some((t) => t.toLowerCase().includes(promptSearch.toLowerCase()))
+      const matchesCategory = selectedCategory === "all" || prompt.category === selectedCategory
+      return matchesSearch && matchesCategory
+    })
+  }, [prompts, promptSearch, selectedCategory])
+
+  const header =
+    view === "Compare models"
+      ? {
+          icon: GitCompare,
+          title: "Compare models",
+          description: "Run the same resolved prompt across providers and retain observed outcomes.",
+        }
+      : view === "Prompt library"
+        ? {
+            icon: BookOpen,
+            title: "Prompt library",
+            description: "Store reusable templates with version history and one-click rollback.",
+          }
+        : view === "Cost analytics"
+          ? {
+              icon: BarChart3,
+              title: "Cost analytics",
+              description: "Aggregate tokens, latency, and estimated known-model spend across runs and comparisons.",
+            }
+          : view === "Evaluations"
+            ? {
+                icon: ListChecks,
+                title: "Evaluations",
+                description: "Persist deterministic assertions against a response for repeatable checks.",
+              }
+            : {
+                icon: Download,
+                title: "Exports",
+                description: "Download a saved conversation and its run telemetry in a portable format.",
+              }
   const HeaderIcon = header.icon
 
-  return <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6"><div className="mx-auto max-w-6xl">
-    <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="flex items-center gap-2"><HeaderIcon className="size-4" /><h1 className="text-lg font-semibold tracking-tight">{header.title}</h1></div><p className="mt-1 text-xs text-muted-foreground">{header.description}</p></div>{view !== "Exports" && <Button onPress={() => { if (view === "Compare models") void loadComparisons(); if (view === "Prompt library") void loadPrompts(); if (view === "Cost analytics") void loadAnalytics(); if (view === "Evaluations") void loadEvaluations() }} variant="outline" size="sm" isDisabled={isLoading}><RefreshCw className={isLoading ? "animate-spin" : ""} /> Refresh</Button>}</div>
-    {notice && <div className="mt-4 border bg-muted px-3 py-2 text-xs">{notice}</div>}
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="mx-auto max-w-6xl">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <HeaderIcon className="size-4" />
+              <h1 className="text-lg font-semibold tracking-tight">{header.title}</h1>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{header.description}</p>
+          </div>
+          {view !== "Exports" && (
+            <Button
+              onPress={() => {
+                if (view === "Compare models") void loadComparisons()
+                if (view === "Prompt library") void loadPrompts()
+                if (view === "Cost analytics") void loadAnalytics()
+                if (view === "Evaluations") void loadEvaluations()
+              }}
+              variant="outline"
+              size="sm"
+              isDisabled={isLoading}
+            >
+              <RefreshCw className={isLoading ? "animate-spin" : ""} /> Refresh
+            </Button>
+          )}
+        </div>
+        {notice && <div className="mt-4 border bg-muted px-3 py-2 text-xs">{notice}</div>}
 
-    {view === "Compare models" && <div className="mt-6 grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]"><form onSubmit={submitComparison} className="space-y-4"><Card className="border"><CardHeader className="border-b"><CardTitle>New comparison</CardTitle><CardDescription>Demo mode is deterministic. Live mode only runs configured providers.</CardDescription></CardHeader><CardContent className="space-y-4 pt-4"><label className="block text-xs font-medium">Prompt<Textarea value={comparisonPrompt} onChange={(event) => setComparisonPrompt(event.target.value)} className="mt-2 h-28 resize-none" /></label><label className="block text-xs font-medium">System instruction<Textarea value={comparisonSystem} onChange={(event) => setComparisonSystem(event.target.value)} className="mt-2 h-20 resize-none" /></label><label className="block text-xs font-medium">Mode<select value={comparisonMode} onChange={(event) => setComparisonMode(event.target.value as RunMode)} className="mt-2 h-9 w-full border bg-background px-2 text-xs"><option value="demo">Demo</option><option value="live">Live</option></select></label><div><p className="text-xs font-medium">Targets <span className="text-muted-foreground">({selectedTargets.length}/5)</span></p><div className="mt-2 grid gap-2">{providers.map((provider) => <button type="button" onClick={() => toggleTarget(provider.id)} key={provider.id} className={`flex items-center justify-between border px-2.5 py-2 text-left text-xs ${selectedTargets.includes(provider.id) ? "border-foreground bg-muted" : "hover:bg-muted/50"}`}><span>{provider.name} · <span className="font-mono">{provider.model}</span></span>{selectedTargets.includes(provider.id) && <CheckCircle2 className="size-3.5" />}</button>)}</div></div><Button type="submit" className="w-full" isDisabled={isLoading || selectedTargets.length < 2}><GitCompare /> {isLoading ? "Comparing…" : "Compare selected"}</Button></CardContent></Card></form><div className="space-y-4">{comparisons.length ? comparisons.map((comparison) => <Card key={comparison.id} className="border"><CardHeader className="border-b"><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle className="text-sm">{comparison.title}</CardTitle><Badge variant="outline">{comparison.mode} · {comparison.results.length} models</Badge></div><CardDescription className="line-clamp-2">{comparison.prompt}</CardDescription></CardHeader><CardContent className="grid gap-3 pt-4 lg:grid-cols-2">{comparison.results.map((result) => <article key={result.id} className="border bg-muted/20 p-3"><div className="flex items-center justify-between gap-2"><p className="font-mono text-xs font-medium">{result.provider} / {result.model}</p><Badge variant={result.status === "complete" ? "secondary" : "destructive"}>{result.status}</Badge></div><p className="mt-2 line-clamp-6 whitespace-pre-wrap text-xs leading-5">{result.error ?? result.response}</p><div className="mt-3 flex gap-3 text-[10px] text-muted-foreground"><span>{(result.latency_ms / 1000).toFixed(1)}s</span><span>{formatTokens(result.prompt_tokens + result.completion_tokens)} tokens</span><span>{formatCost(result.cost_usd)}</span></div></article>)}</CardContent></Card>) : <Card className="border"><CardContent className="py-12 text-center text-xs text-muted-foreground">Run a comparison to retain side-by-side responses and telemetry.</CardContent></Card>}</div></div>}
+        {/* COMPARE MODELS */}
+        {view === "Compare models" && (
+          <div className="mt-6 grid gap-6 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <form onSubmit={submitComparison} className="space-y-4">
+              <Card className="border">
+                <CardHeader className="border-b">
+                  <CardTitle>New comparison</CardTitle>
+                  <CardDescription>Demo mode is deterministic. Live mode only runs configured providers.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <label className="block text-xs font-medium">
+                    Prompt
+                    <Textarea
+                      value={comparisonPrompt}
+                      onChange={(event) => setComparisonPrompt(event.target.value)}
+                      className="mt-2 h-28 resize-none"
+                    />
+                  </label>
+                  <label className="block text-xs font-medium">
+                    System instruction
+                    <Textarea
+                      value={comparisonSystem}
+                      onChange={(event) => setComparisonSystem(event.target.value)}
+                      className="mt-2 h-20 resize-none"
+                    />
+                  </label>
+                  <label className="block text-xs font-medium">
+                    Mode
+                    <select
+                      value={comparisonMode}
+                      onChange={(event) => setComparisonMode(event.target.value as RunMode)}
+                      className="mt-2 h-9 w-full border bg-background px-2 text-xs outline-none"
+                    >
+                      <option value="demo">Demo</option>
+                      <option value="live">Live</option>
+                    </select>
+                  </label>
+                  <div>
+                    <p className="text-xs font-medium">
+                      Targets <span className="text-muted-foreground">({selectedTargets.length}/5)</span>
+                    </p>
+                    <div className="mt-2 grid gap-2">
+                      {providers.map((provider) => (
+                        <button
+                          type="button"
+                          onClick={() => toggleTarget(provider.id)}
+                          key={provider.id}
+                          className={`flex items-center justify-between border px-2.5 py-2 text-left text-xs transition-colors ${
+                            selectedTargets.includes(provider.id)
+                              ? "border-foreground bg-muted"
+                              : "hover:bg-muted/50"
+                          }`}
+                        >
+                          <span>
+                            {provider.name} · <span className="font-mono">{provider.model}</span>
+                          </span>
+                          {selectedTargets.includes(provider.id) && <CheckCircle2 className="size-3.5" />}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <Button type="submit" className="w-full" isDisabled={isLoading || selectedTargets.length < 2}>
+                    <GitCompare /> {isLoading ? "Comparing…" : "Compare selected"}
+                  </Button>
+                </CardContent>
+              </Card>
+            </form>
 
-    {view === "Prompt library" && <div className="mt-6 grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)_240px]"><div><Button onPress={newPrompt} size="sm" className="w-full"><Plus /> New template</Button><div className="mt-3 space-y-2">{prompts.length ? prompts.map((prompt) => <button key={prompt.id} onClick={() => void selectPrompt(prompt.id)} className={`w-full border p-3 text-left ${selectedPrompt?.id === prompt.id ? "border-foreground bg-muted" : "hover:bg-muted/50"}`}><p className="truncate text-xs font-medium">{prompt.title}</p><p className="mt-1 text-[10px] text-muted-foreground">{prompt.category} · v{prompt.latest_version}</p></button>) : <p className="border border-dashed p-3 text-xs text-muted-foreground">Save a template to build your library.</p>}</div></div><form onSubmit={savePrompt}><Card className="border"><CardHeader className="border-b"><div className="flex items-center justify-between gap-3"><CardTitle>{selectedPrompt ? "Edit template" : "New template"}</CardTitle>{selectedPrompt && <Badge variant="outline">v{selectedPrompt.latest_version}</Badge>}</div><CardDescription>Changes to prompt text or system instructions create a new revision.</CardDescription></CardHeader><CardContent className="space-y-4 pt-4"><div className="grid gap-3 sm:grid-cols-2"><label className="text-xs font-medium">Name<Input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} className="mt-2" required /></label><label className="text-xs font-medium">Category<Input value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })} className="mt-2" required /></label></div><label className="block text-xs font-medium">Description<Input value={draft.description} onChange={(event) => setDraft({ ...draft, description: event.target.value })} className="mt-2" /></label><label className="block text-xs font-medium">Tags <span className="text-muted-foreground">(comma separated)</span><Input value={draft.tags} onChange={(event) => setDraft({ ...draft, tags: event.target.value })} className="mt-2" placeholder="kubernetes, deployment" /></label><label className="block text-xs font-medium">Prompt<Textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} className="mt-2 h-40 resize-y font-mono text-xs" required /></label><label className="block text-xs font-medium">System instruction<Textarea value={draft.system_prompt} onChange={(event) => setDraft({ ...draft, system_prompt: event.target.value })} className="mt-2 h-24 resize-y font-mono text-xs" /></label><div className="flex flex-wrap gap-2"><Button type="submit" isDisabled={isLoading}><Save /> {isLoading ? "Saving…" : "Save version"}</Button>{selectedPrompt && <Button type="button" variant="outline" onPress={() => onUsePrompt(draft.content, draft.system_prompt)}>Use in playground</Button>}</div></CardContent></Card></form><div><p className="text-[10px] font-medium tracking-[0.12em] text-muted-foreground uppercase">Version history</p><div className="mt-3 space-y-2">{selectedPrompt?.revisions.length ? selectedPrompt.revisions.map((revision) => <Card key={revision.id} size="sm" className="border"><CardContent><div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">Version {revision.version}</p>{revision.version !== selectedPrompt.latest_version && <Button onPress={() => void restoreRevision(revision.version)} variant="ghost" size="sm" isDisabled={isLoading}><RotateCcw /> Restore</Button>}</div><p className="mt-1 text-[10px] text-muted-foreground">{revision.change_note ?? "Saved revision"}</p></CardContent></Card>) : <p className="text-xs text-muted-foreground">Select a template to inspect its revisions.</p>}</div></div></div>}
+            <div className="space-y-4">
+              {comparisons.length ? (
+                comparisons.map((comparison) => {
+                  const completedResults = comparison.results.filter((r) => r.status === "complete")
+                  const minLatency = completedResults.length
+                    ? Math.min(...completedResults.map((r) => r.latency_ms))
+                    : null
+                  const pricedResults = completedResults.filter((r) => r.cost_usd !== null)
+                  const minCost = pricedResults.length
+                    ? Math.min(...pricedResults.map((r) => r.cost_usd as number))
+                    : null
 
-    {view === "Cost analytics" && <div className="mt-6">{analytics ? <><div className="grid gap-px border bg-border sm:grid-cols-3"><div className="bg-card p-4"><p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Executed runs</p><p className="mt-2 font-mono text-xl">{analytics.total_runs}</p></div><div className="bg-card p-4"><p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Tokens</p><p className="mt-2 font-mono text-xl">{formatTokens(analytics.total_tokens)}</p></div><div className="bg-card p-4"><p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Known-model estimate</p><p className="mt-2 font-mono text-xl">{formatCost(analytics.total_cost_usd)}</p></div></div><Card className="mt-6 border"><CardHeader className="border-b"><CardTitle>Usage by provider and model</CardTitle><CardDescription>Costs are token-based estimates for catalogued models; unknown/local model costs remain unavailable.</CardDescription></CardHeader><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[600px] text-left text-xs"><thead className="border-b bg-muted/35 text-[10px] tracking-[0.1em] text-muted-foreground uppercase"><tr><th className="p-3">Provider / model</th><th className="p-3 text-right">Runs</th><th className="p-3 text-right">Tokens</th><th className="p-3 text-right">Average latency</th><th className="p-3 text-right">Cost</th></tr></thead><tbody>{analytics.by_model.map((item) => <tr key={`${item.provider}-${item.model}`} className="border-b last:border-0"><td className="p-3"><span className="font-medium">{item.provider}</span> <span className="font-mono text-muted-foreground">/ {item.model}</span></td><td className="p-3 text-right font-mono">{item.runs}</td><td className="p-3 text-right font-mono">{formatTokens(item.tokens)}</td><td className="p-3 text-right font-mono">{(item.average_latency_ms / 1000).toFixed(1)}s</td><td className="p-3 text-right font-mono">{formatCost(item.total_cost_usd)}</td></tr>)}</tbody></table>{!analytics.by_model.length && <p className="p-8 text-center text-xs text-muted-foreground">Run a prompt or comparison to populate cost analytics.</p>}</CardContent></Card></> : <Card className="border"><CardContent className="py-10 text-center text-xs text-muted-foreground">Loading analytics…</CardContent></Card>}</div>}
+                  return (
+                    <Card key={comparison.id} className="border">
+                      <CardHeader className="border-b">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <CardTitle className="text-sm">{comparison.title}</CardTitle>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">
+                              {comparison.mode} · {comparison.results.length} models
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="text-muted-foreground hover:text-destructive"
+                              onPress={() => void deleteComparison(comparison.id)}
+                              aria-label="Delete comparison"
+                            >
+                              <Trash2 className="size-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                        <CardDescription className="line-clamp-2">{comparison.prompt}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="grid gap-3 pt-4 lg:grid-cols-2">
+                        {comparison.results.map((result) => {
+                          const isFastest = minLatency !== null && result.latency_ms === minLatency && completedResults.length > 1
+                          const isLowestCost =
+                            minCost !== null && result.cost_usd === minCost && pricedResults.length > 1
 
-    {view === "Evaluations" && <div className="mt-6 grid gap-6 lg:grid-cols-[390px_minmax(0,1fr)]"><form onSubmit={submitEvaluation}><Card className="border"><CardHeader className="border-b"><CardTitle>Evaluate a response</CardTitle><CardDescription>Store an assertion result for a model response or manually supplied text.</CardDescription></CardHeader><CardContent className="space-y-4 pt-4"><label className="block text-xs font-medium">Evaluation name<Input value={evaluationTitle} onChange={(event) => setEvaluationTitle(event.target.value)} className="mt-2" /></label><label className="block text-xs font-medium">Response under test<Textarea value={evaluationOutput} onChange={(event) => setEvaluationOutput(event.target.value)} className="mt-2 h-40 resize-y" required /></label><div className="grid grid-cols-2 gap-3"><label className="text-xs font-medium">Assertion<select value={assertionType} onChange={(event) => setAssertionType(event.target.value)} className="mt-2 h-9 w-full border bg-background px-2 text-xs"><option value="contains">Contains text</option><option value="not_contains">Does not contain</option><option value="equals">Equals</option><option value="json_valid">Valid JSON</option><option value="max_length">Maximum length</option></select></label>{assertionType !== "json_valid" && <label className="text-xs font-medium">Expected {assertionType === "max_length" ? "characters" : "value"}<Input value={assertionValue} onChange={(event) => setAssertionValue(event.target.value)} className="mt-2" required /></label>}</div><Button type="submit" className="w-full" isDisabled={isLoading}><ListChecks /> {isLoading ? "Evaluating…" : "Run evaluation"}</Button></CardContent></Card></form><div className="space-y-3">{evaluations.length ? evaluations.map((evaluation) => <Card key={evaluation.id} className="border"><CardContent><div className="flex items-center justify-between gap-3"><p className="text-xs font-medium">{evaluation.title}</p><Badge variant={evaluation.passed ? "secondary" : "destructive"}>{evaluation.passed ? "Passed" : "Failed"}</Badge></div><div className="mt-3 space-y-2">{evaluation.results.map((result) => <div key={result.id} className="flex gap-2 border-l-2 border-muted pl-2 text-xs"><span className={result.passed ? "text-emerald-600" : "text-destructive"}>{result.passed ? <CheckCircle2 className="size-3.5" /> : <XCircle className="size-3.5" />}</span><div><p className="font-medium">{result.assertion_type}</p><p className="mt-0.5 text-muted-foreground">{result.detail}</p></div></div>)}</div></CardContent></Card>) : <Card className="border"><CardContent className="py-12 text-center text-xs text-muted-foreground">Run a deterministic check to create an evaluation record.</CardContent></Card>}</div></div>}
+                          return (
+                            <article key={result.id} className="flex flex-col justify-between border bg-muted/20 p-3">
+                              <div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="font-mono text-xs font-medium">
+                                    {result.provider} / {result.model}
+                                  </p>
+                                  <div className="flex items-center gap-1">
+                                    {isFastest && (
+                                      <Badge variant="secondary" className="text-[9px] gap-0.5 px-1 py-0">
+                                        <Zap className="size-2.5 text-amber-500" /> Fastest
+                                      </Badge>
+                                    )}
+                                    {isLowestCost && (
+                                      <Badge variant="outline" className="text-[9px] px-1 py-0 border-emerald-500 text-emerald-600 dark:text-emerald-400">
+                                        Best value
+                                      </Badge>
+                                    )}
+                                    <Badge variant={result.status === "complete" ? "secondary" : "destructive"}>
+                                      {result.status}
+                                    </Badge>
+                                  </div>
+                                </div>
+                                <p className="mt-2 line-clamp-6 whitespace-pre-wrap text-xs leading-5">
+                                  {result.error ?? result.response}
+                                </p>
+                              </div>
+                              <div className="mt-3 flex items-center justify-between border-t pt-2 text-[10px] text-muted-foreground">
+                                <div className="flex gap-3">
+                                  <span>{(result.latency_ms / 1000).toFixed(1)}s</span>
+                                  <span>{formatTokens(result.prompt_tokens + result.completion_tokens)} tokens</span>
+                                  <span>{formatCost(result.cost_usd)}</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <TooltipTrigger>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      onPress={async () => {
+                                        await navigator.clipboard.writeText(result.response)
+                                        setCopiedId(result.id)
+                                        window.setTimeout(() => setCopiedId(null), 1400)
+                                      }}
+                                      aria-label="Copy response"
+                                    >
+                                      {copiedId === result.id ? <Check /> : <Copy />}
+                                    </Button>
+                                    <Tooltip>{copiedId === result.id ? "Copied" : "Copy response"}</Tooltip>
+                                  </TooltipTrigger>
+                                  <TooltipTrigger>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      onPress={() => onUsePrompt(result.response, comparison.system_prompt)}
+                                      aria-label="Use as prompt"
+                                    >
+                                      <SendHorizontal />
+                                    </Button>
+                                    <Tooltip>Use as new prompt in playground</Tooltip>
+                                  </TooltipTrigger>
+                                </div>
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </CardContent>
+                    </Card>
+                  )
+                })
+              ) : (
+                <Card className="border">
+                  <CardContent className="py-12 text-center text-xs text-muted-foreground">
+                    Run a comparison to retain side-by-side responses and telemetry.
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        )}
 
-    {view === "Exports" && <div className="mt-6 max-w-2xl"><Card className="border"><CardHeader className="border-b"><CardTitle>Export a saved run</CardTitle><CardDescription>Each file includes conversation messages; Markdown, CSV, and JSON also include persisted telemetry where applicable.</CardDescription></CardHeader><CardContent className="space-y-4 pt-4"><label className="block text-xs font-medium">Saved run<select value={exportConversationId} onChange={(event) => setExportConversationId(event.target.value)} className="mt-2 h-9 w-full border bg-background px-2 text-xs"><option value="">Choose a run…</option>{conversations.map((conversation) => <option key={conversation.id} value={conversation.id}>{conversation.title}</option>)}</select></label><label className="block text-xs font-medium">Format<select value={exportFormat} onChange={(event) => setExportFormat(event.target.value)} className="mt-2 h-9 w-full border bg-background px-2 text-xs"><option value="markdown">Markdown (.md)</option><option value="json">JSON (.json)</option><option value="csv">CSV (.csv)</option><option value="html">HTML (.html)</option></select></label><Button onPress={() => void exportConversation()} isDisabled={isLoading || !conversations.length}><Download /> {isLoading ? "Preparing…" : "Download export"}</Button>{!conversations.length && <p className="text-xs text-muted-foreground">Run and save a prompt before exporting it.</p>}</CardContent></Card></div>}
-  </div></div>
+        {/* PROMPT LIBRARY */}
+        {view === "Prompt library" && (
+          <div className="mt-6 grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)_240px]">
+            <div>
+              <Button onPress={newPrompt} size="sm" className="w-full">
+                <Plus /> New template
+              </Button>
+              <div className="mt-3 space-y-2">
+                <Input
+                  value={promptSearch}
+                  onChange={(e) => setPromptSearch(e.target.value)}
+                  placeholder="Filter templates…"
+                  aria-label="Search prompt templates"
+                />
+                {promptCategories.length > 2 && (
+                  <div className="flex flex-wrap gap-1">
+                    {promptCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setSelectedCategory(cat)}
+                        className={`rounded-none border px-2 py-0.5 text-[10px] uppercase transition-colors ${
+                          selectedCategory === cat ? "border-foreground bg-muted font-medium" : "text-muted-foreground"
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="mt-3 space-y-2">
+                {filteredPrompts.length ? (
+                  filteredPrompts.map((prompt) => (
+                    <div
+                      key={prompt.id}
+                      className={`group flex items-center justify-between border p-2.5 transition-colors ${
+                        selectedPrompt?.id === prompt.id ? "border-foreground bg-muted" : "hover:bg-muted/50"
+                      }`}
+                    >
+                      <button
+                        onClick={() => void selectPrompt(prompt.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
+                        <p className="truncate text-xs font-medium">{prompt.title}</p>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {prompt.category} · v{prompt.latest_version}
+                        </p>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="opacity-0 group-hover:opacity-100 hover:text-destructive"
+                        onPress={() => void deletePrompt(prompt.id)}
+                        aria-label={`Delete ${prompt.title}`}
+                      >
+                        <Trash2 className="size-3" />
+                      </Button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="border border-dashed p-3 text-xs text-muted-foreground">
+                    {promptSearch ? "No matching templates." : "Save a template to build your library."}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <form onSubmit={savePrompt}>
+              <Card className="border">
+                <CardHeader className="border-b">
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle>{selectedPrompt ? "Edit template" : "New template"}</CardTitle>
+                    {selectedPrompt && <Badge variant="outline">v{selectedPrompt.latest_version}</Badge>}
+                  </div>
+                  <CardDescription>Changes to prompt text or system instructions create a new revision.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="text-xs font-medium">
+                      Name
+                      <Input
+                        value={draft.title}
+                        onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+                        className="mt-2"
+                        required
+                      />
+                    </label>
+                    <label className="text-xs font-medium">
+                      Category
+                      <Input
+                        value={draft.category}
+                        onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+                        className="mt-2"
+                        required
+                      />
+                    </label>
+                  </div>
+                  <label className="block text-xs font-medium">
+                    Description
+                    <Input
+                      value={draft.description}
+                      onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+                      className="mt-2"
+                    />
+                  </label>
+                  <label className="block text-xs font-medium">
+                    Tags <span className="text-muted-foreground">(comma separated)</span>
+                    <Input
+                      value={draft.tags}
+                      onChange={(event) => setDraft({ ...draft, tags: event.target.value })}
+                      className="mt-2"
+                      placeholder="kubernetes, deployment"
+                    />
+                  </label>
+                  <label className="block text-xs font-medium">
+                    Prompt
+                    <Textarea
+                      value={draft.content}
+                      onChange={(event) => setDraft({ ...draft, content: event.target.value })}
+                      className="mt-2 h-40 resize-y font-mono text-xs"
+                      required
+                    />
+                  </label>
+                  <label className="block text-xs font-medium">
+                    System instruction
+                    <Textarea
+                      value={draft.system_prompt}
+                      onChange={(event) => setDraft({ ...draft, system_prompt: event.target.value })}
+                      className="mt-2 h-24 resize-y font-mono text-xs"
+                    />
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="submit" isDisabled={isLoading}>
+                      <Save /> {isLoading ? "Saving…" : "Save version"}
+                    </Button>
+                    {selectedPrompt && (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onPress={() => onUsePrompt(draft.content, draft.system_prompt)}
+                        >
+                          Use in playground
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          className="hover:text-destructive"
+                          onPress={() => void deletePrompt(selectedPrompt.id)}
+                        >
+                          <Trash2 className="size-3.5" /> Delete template
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </form>
+
+            <div>
+              <p className="text-[10px] font-medium tracking-[0.12em] text-muted-foreground uppercase">Version history</p>
+              <div className="mt-3 space-y-2">
+                {selectedPrompt?.revisions.length ? (
+                  selectedPrompt.revisions.map((revision) => (
+                    <Card key={revision.id} size="sm" className="border">
+                      <CardContent>
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-xs font-medium">Version {revision.version}</p>
+                          {revision.version !== selectedPrompt.latest_version && (
+                            <Button
+                              onPress={() => void restoreRevision(revision.version)}
+                              variant="ghost"
+                              size="sm"
+                              isDisabled={isLoading}
+                            >
+                              <RotateCcw /> Restore
+                            </Button>
+                          )}
+                        </div>
+                        <p className="mt-1 text-[10px] text-muted-foreground">
+                          {revision.change_note ?? "Saved revision"}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">Select a template to inspect its revisions.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* COST ANALYTICS */}
+        {view === "Cost analytics" && (
+          <div className="mt-6">
+            {analytics ? (
+              <>
+                <div className="grid gap-px border bg-border sm:grid-cols-3">
+                  <div className="bg-card p-4">
+                    <p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Executed runs</p>
+                    <p className="mt-2 font-mono text-xl">{analytics.total_runs}</p>
+                  </div>
+                  <div className="bg-card p-4">
+                    <p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Tokens</p>
+                    <p className="mt-2 font-mono text-xl">{formatTokens(analytics.total_tokens)}</p>
+                  </div>
+                  <div className="bg-card p-4">
+                    <p className="text-[10px] tracking-[0.12em] text-muted-foreground uppercase">Known-model estimate</p>
+                    <p className="mt-2 font-mono text-xl">{formatCost(analytics.total_cost_usd)}</p>
+                  </div>
+                </div>
+
+                <Card className="mt-6 border">
+                  <CardHeader className="border-b">
+                    <CardTitle>Usage by provider and model</CardTitle>
+                    <CardDescription>
+                      Costs are token-based estimates for catalogued models; unknown/local model costs remain
+                      unavailable.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="overflow-x-auto p-0">
+                    <table className="w-full min-w-[640px] text-left text-xs">
+                      <thead className="border-b bg-muted/35 text-[10px] tracking-[0.1em] text-muted-foreground uppercase">
+                        <tr>
+                          <th className="p-3">Provider / model</th>
+                          <th className="p-3 text-right">Runs</th>
+                          <th className="p-3 text-right">Tokens</th>
+                          <th className="p-3 text-right">Token share</th>
+                          <th className="p-3 text-right">Average latency</th>
+                          <th className="p-3 text-right">Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analytics.by_model.map((item) => {
+                          const percentage = analytics.total_tokens > 0
+                            ? Math.round((item.tokens / analytics.total_tokens) * 100)
+                            : 0
+                          return (
+                            <tr key={`${item.provider}-${item.model}`} className="border-b last:border-0">
+                              <td className="p-3">
+                                <span className="font-medium">{item.provider}</span>{" "}
+                                <span className="font-mono text-muted-foreground">/ {item.model}</span>
+                              </td>
+                              <td className="p-3 text-right font-mono">{item.runs}</td>
+                              <td className="p-3 text-right font-mono">{formatTokens(item.tokens)}</td>
+                              <td className="p-3 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <div className="h-1.5 w-16 overflow-hidden bg-muted">
+                                    <div
+                                      className="h-full bg-foreground"
+                                      style={{ width: `${Math.min(100, percentage)}%` }}
+                                    />
+                                  </div>
+                                  <span className="font-mono text-[10px] text-muted-foreground">{percentage}%</span>
+                                </div>
+                              </td>
+                              <td className="p-3 text-right font-mono">
+                                {(item.average_latency_ms / 1000).toFixed(1)}s
+                              </td>
+                              <td className="p-3 text-right font-mono">{formatCost(item.total_cost_usd)}</td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                    {!analytics.by_model.length && (
+                      <p className="p-8 text-center text-xs text-muted-foreground">
+                        Run a prompt or comparison to populate cost analytics.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              <Card className="border">
+                <CardContent className="py-10 text-center text-xs text-muted-foreground">
+                  Loading analytics…
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* EVALUATIONS */}
+        {view === "Evaluations" && (
+          <div className="mt-6 grid gap-6 lg:grid-cols-[390px_minmax(0,1fr)]">
+            <form onSubmit={submitEvaluation}>
+              <Card className="border">
+                <CardHeader className="border-b">
+                  <CardTitle>Evaluate a response</CardTitle>
+                  <CardDescription>Store an assertion result for a model response or manually supplied text.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <label className="block text-xs font-medium">
+                    Evaluation name
+                    <Input
+                      value={evaluationTitle}
+                      onChange={(event) => setEvaluationTitle(event.target.value)}
+                      className="mt-2"
+                    />
+                  </label>
+                  <label className="block text-xs font-medium">
+                    Response under test
+                    <Textarea
+                      value={evaluationOutput}
+                      onChange={(event) => setEvaluationOutput(event.target.value)}
+                      className="mt-2 h-40 resize-y"
+                      required
+                    />
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-xs font-medium">
+                      Assertion
+                      <select
+                        value={assertionType}
+                        onChange={(event) => setAssertionType(event.target.value)}
+                        className="mt-2 h-9 w-full border bg-background px-2 text-xs outline-none"
+                      >
+                        <option value="contains">Contains text</option>
+                        <option value="not_contains">Does not contain</option>
+                        <option value="equals">Equals</option>
+                        <option value="json_valid">Valid JSON</option>
+                        <option value="max_length">Maximum length</option>
+                      </select>
+                    </label>
+                    {assertionType !== "json_valid" && (
+                      <label className="text-xs font-medium">
+                        Expected {assertionType === "max_length" ? "characters" : "value"}
+                        <Input
+                          value={assertionValue}
+                          onChange={(event) => setAssertionValue(event.target.value)}
+                          className="mt-2"
+                          required
+                        />
+                      </label>
+                    )}
+                  </div>
+                  <Button type="submit" className="w-full" isDisabled={isLoading}>
+                    <ListChecks /> {isLoading ? "Evaluating…" : "Run evaluation"}
+                  </Button>
+                </CardContent>
+              </Card>
+            </form>
+
+            <div className="space-y-3">
+              {evaluations.length ? (
+                evaluations.map((evaluation) => (
+                  <Card key={evaluation.id} className="border">
+                    <CardContent className="pt-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-medium">{evaluation.title}</p>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={evaluation.passed ? "secondary" : "destructive"}>
+                            {evaluation.passed ? "Passed" : "Failed"}
+                          </Badge>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="text-muted-foreground hover:text-destructive"
+                            onPress={() => void deleteEvaluation(evaluation.id)}
+                            aria-label="Delete evaluation"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-2">
+                        {evaluation.results.map((result) => (
+                          <div key={result.id} className="flex gap-2 border-l-2 border-muted pl-2 text-xs">
+                            <span className={result.passed ? "text-emerald-600" : "text-destructive"}>
+                              {result.passed ? (
+                                <CheckCircle2 className="size-3.5" />
+                              ) : (
+                                <XCircle className="size-3.5" />
+                              )}
+                            </span>
+                            <div>
+                              <p className="font-medium">{result.assertion_type}</p>
+                              <p className="mt-0.5 text-muted-foreground">{result.detail}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              ) : (
+                <Card className="border">
+                  <CardContent className="py-12 text-center text-xs text-muted-foreground">
+                    Run a deterministic check to create an evaluation record.
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* EXPORTS */}
+        {view === "Exports" && (
+          <div className="mt-6 max-w-2xl">
+            <Card className="border">
+              <CardHeader className="border-b">
+                <CardTitle>Export a saved run</CardTitle>
+                <CardDescription>
+                  Each file includes conversation messages; Markdown, CSV, and JSON also include persisted telemetry
+                  where applicable.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-4">
+                <label className="block text-xs font-medium">
+                  Saved run
+                  <select
+                    value={exportConversationId}
+                    onChange={(event) => setExportConversationId(event.target.value)}
+                    className="mt-2 h-9 w-full border bg-background px-2 text-xs outline-none"
+                  >
+                    <option value="">Choose a run…</option>
+                    {conversations.map((conversation) => (
+                      <option key={conversation.id} value={conversation.id}>
+                        {conversation.title}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs font-medium">
+                  Format
+                  <select
+                    value={exportFormat}
+                    onChange={(event) => setExportFormat(event.target.value)}
+                    className="mt-2 h-9 w-full border bg-background px-2 text-xs outline-none"
+                  >
+                    <option value="markdown">Markdown (.md)</option>
+                    <option value="json">JSON (.json)</option>
+                    <option value="csv">CSV (.csv)</option>
+                    <option value="html">HTML (.html)</option>
+                  </select>
+                </label>
+                <Button
+                  onPress={() => void exportConversation()}
+                  isDisabled={isLoading || !conversations.length}
+                >
+                  <Download /> {isLoading ? "Preparing…" : "Download export"}
+                </Button>
+                {!conversations.length && (
+                  <p className="text-xs text-muted-foreground">Run and save a prompt before exporting it.</p>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
-
-
-export function FeatureWorkspace(props: { view: FeatureView; providers: Provider[]; conversations: Conversation[]; onUsePrompt: (content: string, systemPrompt: string) => void; onRefresh: () => Promise<void> }) {
+export function FeatureWorkspace(props: {
+  view: FeatureView
+  providers: Provider[]
+  conversations: Conversation[]
+  onUsePrompt: (content: string, systemPrompt: string) => void
+  onRefresh: () => Promise<void>
+}) {
   if (props.view === "Test suites" || props.view === "Safety checks") {
-    return <QualityWorkspace view={props.view} providers={props.providers} onRefresh={props.onRefresh} onUsePrompt={(content) => props.onUsePrompt(content, "You are a helpful assistant.")} />
+    return (
+      <QualityWorkspace
+        view={props.view}
+        providers={props.providers}
+        onRefresh={props.onRefresh}
+        onUsePrompt={(content) => props.onUsePrompt(content, "You are a helpful assistant.")}
+      />
+    )
   }
   return <FeatureWorkspaceContent {...props} />
 }

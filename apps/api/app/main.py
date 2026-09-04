@@ -28,9 +28,17 @@ app = FastAPI(
     description="A local prompt engineering control plane with optional live provider execution.",
 )
 
+cors_origins_env = os.getenv("CORS_ORIGINS", "")
+allowed_origins = [
+    origin.strip()
+    for origin in cors_origins_env.split(",")
+    if origin.strip()
+] or ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -287,6 +295,7 @@ def now_string() -> str:
 def db_connection() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
+    connection.execute("PRAGMA foreign_keys = ON;")
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -308,7 +317,7 @@ def initialize_database() -> None:
               content TEXT NOT NULL,
               model TEXT,
               created_at TEXT NOT NULL,
-              FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+              FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS runs (
               id TEXT PRIMARY KEY,
@@ -323,7 +332,15 @@ def initialize_database() -> None:
               cost_usd REAL,
               token_source TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+              FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS run_feedback (
+              id TEXT PRIMARY KEY,
+              run_id TEXT NOT NULL,
+              rating INTEGER NOT NULL CHECK(rating IN (-1, 1)),
+              comment TEXT,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS prompt_templates (
               id TEXT PRIMARY KEY,
@@ -346,7 +363,7 @@ def initialize_database() -> None:
               change_note TEXT,
               created_at TEXT NOT NULL,
               UNIQUE(prompt_id, version),
-              FOREIGN KEY(prompt_id) REFERENCES prompt_templates(id)
+              FOREIGN KEY(prompt_id) REFERENCES prompt_templates(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS comparisons (
               id TEXT PRIMARY KEY,
@@ -370,7 +387,7 @@ def initialize_database() -> None:
               token_source TEXT NOT NULL,
               error TEXT,
               created_at TEXT NOT NULL,
-              FOREIGN KEY(comparison_id) REFERENCES comparisons(id)
+              FOREIGN KEY(comparison_id) REFERENCES comparisons(id) ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS evaluations (
               id TEXT PRIMARY KEY,
@@ -387,14 +404,68 @@ def initialize_database() -> None:
               expected TEXT,
               passed INTEGER NOT NULL,
               detail TEXT NOT NULL,
-              FOREIGN KEY(evaluation_id) REFERENCES evaluations(id)
+              FOREIGN KEY(evaluation_id) REFERENCES evaluations(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS test_suites (
+              id TEXT PRIMARY KEY,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL,
+              prompt_template TEXT NOT NULL,
+              system_prompt TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS test_cases (
+              id TEXT PRIMARY KEY,
+              suite_id TEXT NOT NULL,
+              name TEXT NOT NULL,
+              input TEXT NOT NULL,
+              assertions_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(suite_id) REFERENCES test_suites(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS test_suite_runs (
+              id TEXT PRIMARY KEY,
+              suite_id TEXT NOT NULL,
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              mode TEXT NOT NULL,
+              status TEXT NOT NULL,
+              total_cases INTEGER NOT NULL,
+              passed_cases INTEGER NOT NULL,
+              failed_cases INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(suite_id) REFERENCES test_suites(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS test_case_runs (
+              id TEXT PRIMARY KEY,
+              suite_run_id TEXT NOT NULL,
+              case_id TEXT NOT NULL,
+              case_name TEXT NOT NULL,
+              response TEXT NOT NULL,
+              status TEXT NOT NULL,
+              passed INTEGER NOT NULL,
+              latency_ms INTEGER NOT NULL,
+              prompt_tokens INTEGER NOT NULL,
+              completion_tokens INTEGER NOT NULL,
+              cost_usd REAL,
+              token_source TEXT NOT NULL,
+              error TEXT,
+              outcomes_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY(suite_run_id) REFERENCES test_suite_runs(id) ON DELETE CASCADE,
+              FOREIGN KEY(case_id) REFERENCES test_cases(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS conversations_updated_at ON conversations(updated_at DESC);
             CREATE INDEX IF NOT EXISTS messages_conversation_id ON messages(conversation_id, created_at);
             CREATE INDEX IF NOT EXISTS runs_conversation_id ON runs(conversation_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS run_feedback_run_id ON run_feedback(run_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS prompt_revisions_prompt_id ON prompt_revisions(prompt_id, version DESC);
             CREATE INDEX IF NOT EXISTS comparison_results_comparison_id ON comparison_results(comparison_id);
             CREATE INDEX IF NOT EXISTS evaluations_created_at ON evaluations(created_at DESC);
+            CREATE INDEX IF NOT EXISTS test_cases_suite_id ON test_cases(suite_id);
+            CREATE INDEX IF NOT EXISTS test_suite_runs_suite_id ON test_suite_runs(suite_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS test_case_runs_suite_run_id ON test_case_runs(suite_run_id);
             """
         )
 
@@ -547,8 +618,16 @@ async def live_chunks(request: ChatRequest, spec: ProviderSpec, usage_state: dic
     async for chunk in response:
         usage = getattr(chunk, "usage", None)
         if usage:
-            usage_state["prompt_tokens"] = getattr(usage, "prompt_tokens", None) or usage.get("prompt_tokens")
-            usage_state["completion_tokens"] = getattr(usage, "completion_tokens", None) or usage.get("completion_tokens")
+            if isinstance(usage, dict):
+                p_tok = usage.get("prompt_tokens")
+                c_tok = usage.get("completion_tokens")
+            else:
+                p_tok = getattr(usage, "prompt_tokens", None)
+                c_tok = getattr(usage, "completion_tokens", None)
+            if p_tok is not None:
+                usage_state["prompt_tokens"] = p_tok
+            if c_tok is not None:
+                usage_state["completion_tokens"] = c_tok
         choices = getattr(chunk, "choices", [])
         if choices:
             delta = getattr(choices[0], "delta", None)
@@ -681,6 +760,19 @@ def get_conversation(conversation_id: str) -> Conversation:
     return conversation
 
 
+@app.delete("/api/conversations/{conversation_id}", status_code=204, tags=["conversations"])
+def delete_conversation(conversation_id: str) -> Response:
+    with db_connection() as connection:
+        row = connection.execute("SELECT id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        connection.execute("DELETE FROM run_feedback WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)", (conversation_id,))
+        connection.execute("DELETE FROM runs WHERE conversation_id = ?", (conversation_id,))
+        connection.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        connection.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    return Response(status_code=204)
+
+
 @app.post("/api/chat/stream", tags=["chat"])
 async def chat_stream(request: ChatRequest) -> StreamingResponse:
     spec = PROVIDER_BY_ID.get(request.provider)
@@ -694,7 +786,19 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             raise HTTPException(status_code=404, detail="Conversation not found")
     else:
         conversation = create_conversation_record(request.prompt.strip().split("\n", maxsplit=1)[0][:72] or "Untitled playground")
-    persist_message(conversation.id, "system", request.system_prompt)
+
+    should_persist_system = True
+    if request.conversation_id:
+        with db_connection() as connection:
+            existing_system = connection.execute(
+                "SELECT content FROM messages WHERE conversation_id = ? AND role = 'system' ORDER BY created_at DESC LIMIT 1",
+                (conversation.id,),
+            ).fetchone()
+            if existing_system and existing_system["content"] == request.system_prompt:
+                should_persist_system = False
+
+    if should_persist_system:
+        persist_message(conversation.id, "system", request.system_prompt)
     persist_message(conversation.id, "user", request.prompt)
     return StreamingResponse(stream_response(request, conversation, spec), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
@@ -764,6 +868,17 @@ def restore_prompt_revision(prompt_id: str, version: int) -> PromptTemplate:
     return restored
 
 
+@app.delete("/api/prompts/{prompt_id}", status_code=204, tags=["prompts"])
+def delete_prompt(prompt_id: str) -> Response:
+    with db_connection() as connection:
+        row = connection.execute("SELECT id FROM prompt_templates WHERE id = ?", (prompt_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Prompt template not found")
+        connection.execute("DELETE FROM prompt_revisions WHERE prompt_id = ?", (prompt_id,))
+        connection.execute("DELETE FROM prompt_templates WHERE id = ?", (prompt_id,))
+    return Response(status_code=204)
+
+
 @app.get("/api/comparisons", response_model=list[Comparison], tags=["comparisons"])
 def list_comparisons() -> list[Comparison]:
     with db_connection() as connection:
@@ -797,6 +912,17 @@ async def create_comparison(payload: ComparisonCreate) -> Comparison:
     return Comparison(id=comparison_id, title=payload.title.strip(), prompt=payload.prompt, system_prompt=payload.system_prompt, mode=payload.mode, created_at=timestamp, results=results)
 
 
+@app.delete("/api/comparisons/{comparison_id}", status_code=204, tags=["comparisons"])
+def delete_comparison(comparison_id: str) -> Response:
+    with db_connection() as connection:
+        row = connection.execute("SELECT id FROM comparisons WHERE id = ?", (comparison_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Comparison not found")
+        connection.execute("DELETE FROM comparison_results WHERE comparison_id = ?", (comparison_id,))
+        connection.execute("DELETE FROM comparisons WHERE id = ?", (comparison_id,))
+    return Response(status_code=204)
+
+
 @app.get("/api/evaluations", response_model=list[Evaluation], tags=["evaluations"])
 def list_evaluations() -> list[Evaluation]:
     with db_connection() as connection:
@@ -823,6 +949,17 @@ def create_evaluation(payload: EvaluationCreate) -> Evaluation:
         for result in results:
             connection.execute("INSERT INTO evaluation_results (id, evaluation_id, assertion_type, expected, passed, detail) VALUES (?, ?, ?, ?, ?, ?)", (result.id, result.evaluation_id, result.assertion_type, result.expected, int(result.passed), result.detail))
     return Evaluation(id=evaluation_id, title=payload.title.strip(), input=payload.input, output=payload.output, passed=passed, created_at=timestamp, results=results)
+
+
+@app.delete("/api/evaluations/{evaluation_id}", status_code=204, tags=["evaluations"])
+def delete_evaluation(evaluation_id: str) -> Response:
+    with db_connection() as connection:
+        row = connection.execute("SELECT id FROM evaluations WHERE id = ?", (evaluation_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Evaluation not found")
+        connection.execute("DELETE FROM evaluation_results WHERE evaluation_id = ?", (evaluation_id,))
+        connection.execute("DELETE FROM evaluations WHERE id = ?", (evaluation_id,))
+    return Response(status_code=204)
 
 
 @app.get("/api/exports/conversations/{conversation_id}", tags=["exports"])
@@ -1202,3 +1339,16 @@ async def run_test_suite(suite_id: str, payload: TestSuiteRunRequest) -> TestSui
         for case_run in case_runs:
             connection.execute("INSERT INTO test_case_runs (id, suite_run_id, case_id, case_name, response, status, passed, latency_ms, prompt_tokens, completion_tokens, cost_usd, token_source, error, outcomes_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (case_run.id, case_run.suite_run_id, case_run.case_id, case_run.case_name, case_run.response, case_run.status, int(case_run.passed), case_run.latency_ms, case_run.prompt_tokens, case_run.completion_tokens, case_run.cost_usd, case_run.token_source, case_run.error, json.dumps([outcome.model_dump() for outcome in case_run.outcomes]), case_run.created_at.isoformat()))
     return run
+
+
+@app.delete("/api/test-suites/{suite_id}", status_code=204, tags=["testing"])
+def delete_test_suite(suite_id: str) -> Response:
+    with db_connection() as connection:
+        row = connection.execute("SELECT id FROM test_suites WHERE id = ?", (suite_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Test suite not found")
+        connection.execute("DELETE FROM test_case_runs WHERE suite_run_id IN (SELECT id FROM test_suite_runs WHERE suite_id = ?)", (suite_id,))
+        connection.execute("DELETE FROM test_suite_runs WHERE suite_id = ?", (suite_id,))
+        connection.execute("DELETE FROM test_cases WHERE suite_id = ?", (suite_id,))
+        connection.execute("DELETE FROM test_suites WHERE id = ?", (suite_id,))
+    return Response(status_code=204)
